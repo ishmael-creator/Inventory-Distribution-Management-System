@@ -2,7 +2,7 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ClipboardCheck, Send, Warehouse, X } from "lucide-react";
+import { ClipboardCheck, Warehouse } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionButton } from "@/components/ui/action-button";
 import { SelectField, TextAreaField, TextField } from "@/components/ui/form-field";
@@ -13,6 +13,7 @@ import type { AllocationRequest, DispatchOrder, HubRecord, ProductPage, Warehous
 function requestTone(status: AllocationRequest["status"]) {
   if (status === "FULFILLED") return "success";
   if (status === "APPROVED" || status === "PENDING") return "warning";
+  if (status === "REJECTED") return "critical"; // Assuming 'critical' is a valid tone
   return "neutral";
 }
 
@@ -21,7 +22,7 @@ function requestLabel(request: AllocationRequest, dispatch?: DispatchOrder) {
   if (request.status === "APPROVED" && !dispatch) return "Approved, awaiting dispatch";
   if (dispatch?.status === "DISPATCHED") return "Dispatched, awaiting hub receipt";
   if (request.status === "FULFILLED" || dispatch?.status === "RECEIVED") return "Hub receipt confirmed";
-  if (request.status === "REJECTED") return "Warehouse unable to deliver";
+  if (request.status === "REJECTED") return "Warehouse rejected";
   return request.status.replaceAll("_", " ");
 }
 
@@ -29,26 +30,20 @@ export default function DistributionPage() {
   const queryClient = useQueryClient();
   const [hubForm, setHubForm] = useState({ name: "", location: "", warehouse_id: "" });
   const [requestForm, setRequestForm] = useState({ product_id: "", warehouse_id: "", hub_id: "", quantity: "100", notes: "" });
-  const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
-  const [approvedQuantities, setApprovedQuantities] = useState<Record<string, string>>({});
-  const [receiptNotes, setReceiptNotes] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
   const products = useQuery({ queryKey: ["products"], queryFn: async () => (await api.get<ProductPage>("/products")).data });
   const warehouses = useQuery({ queryKey: ["warehouses"], queryFn: async () => (await api.get<WarehouseRecord[]>("/warehouses")).data });
   const hubs = useQuery({ queryKey: ["hubs"], queryFn: async () => (await api.get<HubRecord[]>("/distribution/hubs")).data });
-  const requests = useQuery({
-    queryKey: ["distribution-requests"],
-    queryFn: async () => (await api.get<AllocationRequest[]>("/distribution/requests")).data,
-  });
-  const dispatches = useQuery({
-    queryKey: ["dispatches"],
-    queryFn: async () => (await api.get<DispatchOrder[]>("/distribution/dispatches")).data,
-  });
+  const requests = useQuery({ queryKey: ["distribution-requests"], queryFn: async () => (await api.get<AllocationRequest[]>("/distribution/requests")).data });
+  const dispatches = useQuery({ queryKey: ["dispatches"], queryFn: async () => (await api.get<DispatchOrder[]>("/distribution/dispatches")).data });
 
   const productNameById = useMemo(() => new Map((products.data?.items ?? []).map((item) => [item.id, item.name])), [products.data?.items]);
   const warehouseNameById = useMemo(() => new Map((warehouses.data ?? []).map((item) => [item.id, item.name])), [warehouses.data]);
   const hubNameById = useMemo(() => new Map((hubs.data ?? []).map((item) => [item.id, item.name])), [hubs.data]);
+  const dispatchByRequestId = useMemo(() => new Map((dispatches.data ?? []).filter((d) => d.allocation_request_id).map((d) => [d.allocation_request_id, d])), [dispatches.data]);
+
+  const filteredHubs = (hubs.data ?? []).filter((hub) => !requestForm.warehouse_id || hub.warehouse_id === requestForm.warehouse_id);
 
   const createHub = useMutation({
     mutationFn: async () => api.post<HubRecord>("/distribution/hubs", { ...hubForm, location: hubForm.location || null }),
@@ -61,120 +56,61 @@ export default function DistributionPage() {
   });
 
   const createRequest = useMutation({
-    mutationFn: async () =>
-      api.post<AllocationRequest>("/distribution/requests", {
-        product_id: requestForm.product_id,
-        warehouse_id: requestForm.warehouse_id,
-        hub_id: requestForm.hub_id,
-        quantity: Number(requestForm.quantity),
-        notes: requestForm.notes || null,
-      }),
+    mutationFn: async () => api.post<AllocationRequest>("/distribution/requests", {
+      product_id: requestForm.product_id,
+      warehouse_id: requestForm.warehouse_id,
+      hub_id: requestForm.hub_id,
+      quantity: Number(requestForm.quantity),
+      notes: requestForm.notes || null,
+    }),
     onSuccess: async () => {
       setRequestForm({ product_id: "", warehouse_id: "", hub_id: "", quantity: "100", notes: "" });
       setError(null);
       await queryClient.invalidateQueries({ queryKey: ["distribution-requests"] });
     },
-    onError: () => setError("Request could not be created. Confirm the hub belongs to the selected warehouse."),
+    onError: () => setError("Request failed. Ensure the hub belongs to the selected warehouse."),
   });
-
-  const approveRequest = useMutation({
-    mutationFn: async (request: AllocationRequest) =>
-      api.post<AllocationRequest>(`/distribution/requests/${request.id}/approve`, {
-        approved_quantity: Number(approvedQuantities[request.id] || request.quantity),
-        review_notes: reviewNotes[request.id] || null,
-      }),
-    onSuccess: async () => queryClient.invalidateQueries({ queryKey: ["distribution-requests"] }),
-  });
-
-  const rejectRequest = useMutation({
-    mutationFn: async (request: AllocationRequest) =>
-      api.post<AllocationRequest>(`/distribution/requests/${request.id}/reject`, {
-        review_notes: reviewNotes[request.id] || "Warehouse cannot fulfill this request.",
-      }),
-    onSuccess: async () => queryClient.invalidateQueries({ queryKey: ["distribution-requests"] }),
-  });
-
-  const dispatchRequest = useMutation({
-    mutationFn: async (requestId: string) => api.post<DispatchOrder>(`/distribution/requests/${requestId}/dispatch`),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["distribution-requests"] }),
-        queryClient.invalidateQueries({ queryKey: ["dispatches"] }),
-        queryClient.invalidateQueries({ queryKey: ["balances"] }),
-        queryClient.invalidateQueries({ queryKey: ["transactions"] }),
-      ]);
-    },
-    onError: () => setError("Dispatch failed. Check warehouse stock is available."),
-  });
-
-  const receiveDispatch = useMutation({
-    mutationFn: async (dispatch: DispatchOrder) =>
-      api.post<DispatchOrder>("/distribution/receipts", {
-        dispatch_order_id: dispatch.id,
-        quantity_received: dispatch.quantity,
-        notes: receiptNotes[dispatch.id] || null,
-      }),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["distribution-requests"] }),
-        queryClient.invalidateQueries({ queryKey: ["dispatches"] }),
-      ]);
-    },
-  });
-
-  const filteredHubs = (hubs.data ?? []).filter((hub) => !requestForm.warehouse_id || hub.warehouse_id === requestForm.warehouse_id);
-  const dispatchByRequestId = useMemo(
-    () => new Map((dispatches.data ?? []).filter((dispatch) => dispatch.allocation_request_id).map((dispatch) => [dispatch.allocation_request_id, dispatch])),
-    [dispatches.data],
-  );
-  const warehouseQueue = (requests.data ?? []).filter((request) => request.status === "PENDING" || request.status === "APPROVED");
-  const hubReceiptRows = (dispatches.data ?? []).filter((dispatch) => dispatch.status === "DISPATCHED" || dispatch.status === "RECEIVED");
 
   return (
-    <AppShell title="Distribution" description="Manager requests hub stock; warehouse reviews, adjusts, dispatches, and hubs confirm receipt.">
-      {error && <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
-
+    <AppShell title="Distribution Requests" description="Request stock for Hubs and track fulfillment status.">
+      {error && <div className="mb-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      
       <section className="grid gap-6 xl:grid-cols-2">
-        <form onSubmit={(event: FormEvent<HTMLFormElement>) => { event.preventDefault(); createHub.mutate(); }} className="rounded-md border border-line bg-white p-4">
+        <form onSubmit={(e) => { e.preventDefault(); createHub.mutate(); }} className="rounded-md border border-line bg-white p-4">
           <div className="mb-4 flex items-center gap-2">
             <Warehouse className="h-5 w-5 text-brand" />
-            <h2 className="text-sm font-semibold text-ink">Create Hub</h2>
+            <h2 className="text-sm font-semibold text-ink">Create Hub Location</h2>
           </div>
           <div className="grid gap-4 md:grid-cols-2">
-            <TextField label="Hub Name" value={hubForm.name} onChange={(event) => setHubForm({ ...hubForm, name: event.target.value })} required />
-            <SelectField label="Warehouse" value={hubForm.warehouse_id} onChange={(event) => setHubForm({ ...hubForm, warehouse_id: event.target.value })} required>
+            <TextField label="Hub Name" value={hubForm.name} onChange={(e) => setHubForm({ ...hubForm, name: e.target.value })} required />
+            <SelectField label="Supplying Warehouse" value={hubForm.warehouse_id} onChange={(e) => setHubForm({ ...hubForm, warehouse_id: e.target.value })} required>
               <option value="">Select warehouse</option>
-              {(warehouses.data ?? []).map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}
+              {(warehouses.data ?? []).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
             </SelectField>
-            <TextField label="Location" value={hubForm.location} onChange={(event) => setHubForm({ ...hubForm, location: event.target.value })} />
-            <div className="flex items-end">
-              <ActionButton disabled={createHub.isPending} type="submit">Save Hub</ActionButton>
-            </div>
+            <TextField label="Location" value={hubForm.location} onChange={(e) => setHubForm({ ...hubForm, location: e.target.value })} />
+            <div className="flex items-end"><ActionButton disabled={createHub.isPending} type="submit">Save Hub</ActionButton></div>
           </div>
         </form>
 
-        <form onSubmit={(event: FormEvent<HTMLFormElement>) => { event.preventDefault(); createRequest.mutate(); }} className="rounded-md border border-line bg-white p-4">
+        <form onSubmit={(e) => { e.preventDefault(); createRequest.mutate(); }} className="rounded-md border border-line bg-white p-4">
           <div className="mb-4 flex items-center gap-2">
             <ClipboardCheck className="h-5 w-5 text-brand" />
-            <h2 className="text-sm font-semibold text-ink">Manager Request to Warehouse</h2>
+            <h2 className="text-sm font-semibold text-ink">Request Stock from Warehouse</h2>
           </div>
           <div className="grid gap-4 md:grid-cols-2">
-            <SelectField label="Product" value={requestForm.product_id} onChange={(event) => setRequestForm({ ...requestForm, product_id: event.target.value })} required>
+            <SelectField label="Product" value={requestForm.product_id} onChange={(e) => setRequestForm({ ...requestForm, product_id: e.target.value })} required>
               <option value="">Select product</option>
-              {(products.data?.items ?? []).map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+              {(products.data?.items ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </SelectField>
-            <SelectField label="Warehouse" value={requestForm.warehouse_id} onChange={(event) => setRequestForm({ ...requestForm, warehouse_id: event.target.value, hub_id: "" })} required>
+            <SelectField label="Warehouse" value={requestForm.warehouse_id} onChange={(e) => setRequestForm({ ...requestForm, warehouse_id: e.target.value, hub_id: "" })} required>
               <option value="">Select warehouse</option>
-              {(warehouses.data ?? []).map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}
+              {(warehouses.data ?? []).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
             </SelectField>
-            <SelectField label="Hub" value={requestForm.hub_id} onChange={(event) => setRequestForm({ ...requestForm, hub_id: event.target.value })} required>
+            <SelectField label="Hub" value={requestForm.hub_id} onChange={(e) => setRequestForm({ ...requestForm, hub_id: e.target.value })} required>
               <option value="">Select hub</option>
-              {filteredHubs.map((hub) => <option key={hub.id} value={hub.id}>{hub.name}</option>)}
+              {filteredHubs.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
             </SelectField>
-            <TextField label="Quantity" min={1} type="number" value={requestForm.quantity} onChange={(event) => setRequestForm({ ...requestForm, quantity: event.target.value })} required />
-            <div className="md:col-span-2">
-              <TextAreaField label="Request Notes" value={requestForm.notes} onChange={(event) => setRequestForm({ ...requestForm, notes: event.target.value })} />
-            </div>
+            <TextField label="Quantity" min={1} type="number" value={requestForm.quantity} onChange={(e) => setRequestForm({ ...requestForm, quantity: e.target.value })} required />
             <div className="md:col-span-2">
               <ActionButton disabled={createRequest.isPending} type="submit">Submit Request</ActionButton>
             </div>
@@ -182,10 +118,8 @@ export default function DistributionPage() {
         </form>
       </section>
 
-      <section className="rounded-md border border-line bg-white">
-        <div className="border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold text-ink">Distribution Tracking</h2>
-        </div>
+      <section className="mt-6 rounded-md border border-line bg-white">
+        <div className="border-b border-line px-4 py-3"><h2 className="text-sm font-semibold text-ink">Distribution Tracking</h2></div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1100px] text-left text-sm">
             <thead className="bg-panel text-xs uppercase text-slate-500">
@@ -214,134 +148,7 @@ export default function DistributionPage() {
                   </tr>
                 );
               })}
-              {!requests.data?.length && (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-500">No requests submitted yet.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="rounded-md border border-line bg-white">
-        <div className="border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold text-ink">Warehouse Workbench</h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1200px] text-left text-sm">
-            <thead className="bg-panel text-xs uppercase text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Product</th>
-                <th className="px-4 py-3">Warehouse</th>
-                <th className="px-4 py-3">Hub</th>
-                <th className="px-4 py-3">Requested</th>
-                <th className="px-4 py-3">Approved Qty</th>
-                <th className="px-4 py-3">Warehouse Note</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {warehouseQueue.map((request) => (
-                <tr key={request.id}>
-                  <td className="px-4 py-3 font-medium text-ink">{productNameById.get(request.product_id) ?? request.product_id}</td>
-                  <td className="px-4 py-3 text-slate-600">{request.warehouse_id ? warehouseNameById.get(request.warehouse_id) ?? request.warehouse_id : "-"}</td>
-                  <td className="px-4 py-3 text-slate-600">{request.hub_id ? hubNameById.get(request.hub_id) ?? request.hub_id : "-"}</td>
-                  <td className="px-4 py-3 text-slate-600">{request.quantity}</td>
-                  <td className="px-4 py-3">
-                    {request.status === "PENDING" ? (
-                      <input
-                        className="h-9 w-24 rounded-md border border-line px-2"
-                        min={1}
-                        max={request.quantity}
-                        type="number"
-                        value={approvedQuantities[request.id] ?? String(request.quantity)}
-                        onChange={(event) => setApprovedQuantities({ ...approvedQuantities, [request.id]: event.target.value })}
-                      />
-                    ) : (
-                      request.approved_quantity ?? "-"
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {request.status === "PENDING" ? (
-                      <input
-                        className="h-9 w-64 rounded-md border border-line px-2"
-                        placeholder="Availability note"
-                        value={reviewNotes[request.id] ?? ""}
-                        onChange={(event) => setReviewNotes({ ...reviewNotes, [request.id]: event.target.value })}
-                      />
-                    ) : (
-                      <span className="text-slate-600">{request.review_notes ?? "-"}</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3"><StatusBadge tone={requestTone(request.status)}>{request.status}</StatusBadge></td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-2">
-                      {request.status === "PENDING" && (
-                        <>
-                          <ActionButton variant="secondary" onClick={() => approveRequest.mutate(request)} type="button"><Check className="h-4 w-4" />Approve</ActionButton>
-                          <ActionButton variant="secondary" onClick={() => rejectRequest.mutate(request)} type="button"><X className="h-4 w-4" />Reject</ActionButton>
-                        </>
-                      )}
-                      {request.status === "APPROVED" && (
-                        <ActionButton variant="secondary" onClick={() => dispatchRequest.mutate(request.id)} type="button"><Send className="h-4 w-4" />Dispatch</ActionButton>
-                      )}
-                      {request.status !== "PENDING" && request.status !== "APPROVED" && <span className="text-slate-400">No action</span>}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {!warehouseQueue.length && (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-500">No requests awaiting warehouse action.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="rounded-md border border-line bg-white">
-        <div className="border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold text-ink">Hub Receipts</h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-left text-sm">
-            <thead className="bg-panel text-xs uppercase text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Product</th>
-                <th className="px-4 py-3">Hub</th>
-                <th className="px-4 py-3">Quantity</th>
-                <th className="px-4 py-3">Receipt Note</th>
-                <th className="px-4 py-3">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {hubReceiptRows.map((dispatch) => (
-                <tr key={dispatch.id}>
-                  <td className="px-4 py-3 font-medium text-ink">{productNameById.get(dispatch.product_id) ?? dispatch.product_id}</td>
-                  <td className="px-4 py-3 text-slate-600">{hubNameById.get(dispatch.to_location_id) ?? dispatch.to_location_id}</td>
-                  <td className="px-4 py-3 text-slate-600">{dispatch.quantity}</td>
-                  <td className="px-4 py-3">
-                    {dispatch.status === "DISPATCHED" ? (
-                      <input
-                        className="h-9 w-72 rounded-md border border-line px-2"
-                        value={receiptNotes[dispatch.id] ?? ""}
-                        onChange={(event) => setReceiptNotes({ ...receiptNotes, [dispatch.id]: event.target.value })}
-                      />
-                    ) : (
-                      <StatusBadge tone="success">Receipt confirmed</StatusBadge>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {dispatch.status === "DISPATCHED" ? (
-                      <ActionButton variant="secondary" onClick={() => receiveDispatch.mutate(dispatch)} type="button">Confirm Receipt</ActionButton>
-                    ) : (
-                      <span className="text-slate-400">Complete</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {!hubReceiptRows.length && (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-500">No hub dispatches yet.</td></tr>
-              )}
+              {!requests.data?.length && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-500">No requests submitted yet.</td></tr>}
             </tbody>
           </table>
         </div>

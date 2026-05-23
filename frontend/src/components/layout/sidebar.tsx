@@ -10,6 +10,7 @@ import {
   History,
   Package,
   Warehouse,
+  Store,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -19,8 +20,10 @@ const items = [
   { label: "Manufacturing", href: "/manufacturing", icon: Factory },
   { label: "Warehouse", href: "/warehouse", icon: Warehouse },
   { label: "Distribution", href: "/distribution", icon: ClipboardCheck },
+  { label: "Hubs", href: "/hubs", icon: Store },
   { label: "Inventory Ledger", href: "/inventory", icon: History },
   { label: "Reports", href: "/inventory#balances", icon: Boxes },
+  
 ];
 
 export function Sidebar() {
