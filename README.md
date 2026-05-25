@@ -95,7 +95,7 @@ Make sure you have installed:
 
 ### 1. Clone the Repository
 ```bash
-git clone <your-github-repo-url>
+git clone <https://github.com/ishmael-creator/Inventory-Distribution-Management-System>
 cd Inventory-Distribution-Management-System
 ```
 
