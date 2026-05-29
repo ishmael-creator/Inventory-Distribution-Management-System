@@ -11,6 +11,7 @@ import {
   Package,
   Warehouse,
   Store,
+  UserSquare2,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -21,6 +22,7 @@ const items = [
   { label: "Warehouse", href: "/warehouse", icon: Warehouse },
   { label: "Distribution", href: "/distribution", icon: ClipboardCheck },
   { label: "Hubs", href: "/hubs", icon: Store },
+  { label: "Agent Dashboard", href: "/agent", icon: UserSquare2 },
   { label: "Inventory Ledger", href: "/inventory", icon: History },
   { label: "Reports", href: "/inventory#balances", icon: Boxes },
   

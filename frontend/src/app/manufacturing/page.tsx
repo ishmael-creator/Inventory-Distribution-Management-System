@@ -3,6 +3,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Factory, Send } from "lucide-react";
+
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionButton } from "@/components/ui/action-button";
 import { SelectField, TextField } from "@/components/ui/form-field";
@@ -16,7 +17,8 @@ function toDatetimeLocal(date: Date) {
 
 function batchTone(status: ProductBatch["status"]) {
   if (status === "RECEIVED_AT_WAREHOUSE") return "success";
-  if (status === "RELEASED_TO_WAREHOUSE") return "warning";
+  if (status === "RELEASED_TO_WAREHOUSE") return "info";
+  if (status === "AWAITING_RELEASE") return "warning";
   return "neutral";
 }
 
@@ -24,11 +26,14 @@ export default function ManufacturingPage() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState({
     product_id: "",
-    batch_number: "",
     quantity: "100",
     produced_at: toDatetimeLocal(new Date()),
   });
+  
   const [error, setError] = useState<string | null>(null);
+  
+  // Track dropdown selections per row
+  const [selectedWarehouses, setSelectedWarehouses] = useState<Record<string, string>>({});
 
   const products = useQuery({
     queryKey: ["products"],
@@ -40,6 +45,15 @@ export default function ManufacturingPage() {
     queryFn: async () => (await api.get<ProductBatch[]>("/manufacturing/batches")).data,
   });
 
+  // Pull down warehouses to populate the release dropdowns
+  const warehouses = useQuery({
+    queryKey: ["warehouses"],
+    queryFn: async () => {
+      const res = await api.get<any>("/warehouses");
+      return Array.isArray(res.data) ? res.data : (res.data?.items ?? []);
+    },
+  });
+
   const productNameById = useMemo(
     () => new Map((products.data?.items ?? []).map((product) => [product.id, product.name])),
     [products.data?.items],
@@ -49,12 +63,11 @@ export default function ManufacturingPage() {
     mutationFn: async () =>
       api.post<ProductBatch>("/manufacturing/batches", {
         product_id: form.product_id,
-        batch_number: form.batch_number,
         quantity: Number(form.quantity),
         produced_at: new Date(form.produced_at).toISOString(),
       }),
     onSuccess: async () => {
-      setForm({ product_id: "", batch_number: "", quantity: "100", produced_at: toDatetimeLocal(new Date()) });
+      setForm({ product_id: "", quantity: "100", produced_at: toDatetimeLocal(new Date()) });
       setError(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["batches"] }),
@@ -62,11 +75,14 @@ export default function ManufacturingPage() {
         queryClient.invalidateQueries({ queryKey: ["transactions"] }),
       ]);
     },
-    onError: () => setError("Batch could not be created. Check the product, batch number, and quantity."),
+    onError: () => setError("Batch could not be created. Check the product and quantity."),
   });
 
   const releaseBatch = useMutation({
-    mutationFn: async (batchId: string) => api.post<ProductBatch>(`/manufacturing/batches/${batchId}/release`),
+    mutationFn: async ({ batchId, destinationId }: { batchId: string; destinationId: string }) => 
+      api.post<ProductBatch>(`/manufacturing/batches/${batchId}/release`, {
+        destination_id: destinationId
+      }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["batches"] });
     },
@@ -80,11 +96,12 @@ export default function ManufacturingPage() {
   return (
     <AppShell title="Manufacturing" description="Create production batches and release them for warehouse receipt.">
       <section className="grid gap-6 xl:grid-cols-[420px_1fr]">
-        <form onSubmit={onSubmit} className="rounded-md border border-line bg-white p-4">
+        <form onSubmit={onSubmit} className="rounded-md border border-line bg-white p-4 h-fit">
           <div className="mb-4 flex items-center gap-2">
             <Factory className="h-5 w-5 text-brand" />
             <h2 className="text-sm font-semibold text-ink">Create Production Batch</h2>
           </div>
+
           <div className="space-y-4">
             <SelectField
               label="Product"
@@ -99,12 +116,7 @@ export default function ManufacturingPage() {
                 </option>
               ))}
             </SelectField>
-            <TextField
-              label="Batch Number"
-              value={form.batch_number}
-              onChange={(event) => setForm({ ...form, batch_number: event.target.value })}
-              required
-            />
+
             <TextField
               label="Quantity"
               min={1}
@@ -113,6 +125,7 @@ export default function ManufacturingPage() {
               onChange={(event) => setForm({ ...form, quantity: event.target.value })}
               required
             />
+
             <TextField
               label="Produced At"
               type="datetime-local"
@@ -120,8 +133,10 @@ export default function ManufacturingPage() {
               onChange={(event) => setForm({ ...form, produced_at: event.target.value })}
               required
             />
+
             {error && <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
-            <ActionButton disabled={createBatch.isPending} type="submit">
+
+            <ActionButton disabled={createBatch.isPending} type="submit" className="w-full">
               <Factory className="h-4 w-4" />
               {createBatch.isPending ? "Creating" : "Create Batch"}
             </ActionButton>
@@ -132,6 +147,7 @@ export default function ManufacturingPage() {
           <div className="border-b border-line px-4 py-3">
             <h2 className="text-sm font-semibold text-ink">Production Batches</h2>
           </div>
+          
           <div className="overflow-x-auto">
             <table className="w-full min-w-[900px] text-left text-sm">
               <thead className="bg-panel text-xs uppercase text-slate-500">
@@ -141,7 +157,7 @@ export default function ManufacturingPage() {
                   <th className="px-4 py-3">Quantity</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Produced</th>
-                  <th className="px-4 py-3">Action</th>
+                  <th className="px-4 py-3 min-w-[280px]">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
@@ -154,23 +170,41 @@ export default function ManufacturingPage() {
                       <StatusBadge tone={batchTone(batch.status)}>{batch.status.replaceAll("_", " ")}</StatusBadge>
                     </td>
                     <td className="px-4 py-3 text-slate-600">{new Date(batch.produced_at).toLocaleString()}</td>
+                    
                     <td className="px-4 py-3">
-                      {batch.status === "DRAFT" ? (
-                        <ActionButton
-                          disabled={releaseBatch.isPending}
-                          onClick={() => releaseBatch.mutate(batch.id)}
-                          type="button"
-                          variant="secondary"
-                        >
-                          <Send className="h-4 w-4" />
-                          Release
-                        </ActionButton>
+                      {batch.status === "AWAITING_RELEASE" ? (
+                        <div className="flex items-center gap-2">
+                          <select
+                            className="h-9 flex-1 rounded-md border border-line px-2 text-sm outline-none focus:border-brand"
+                            value={selectedWarehouses[batch.id] || ""}
+                            onChange={(e) => setSelectedWarehouses({ ...selectedWarehouses, [batch.id]: e.target.value })}
+                          >
+                            <option value="">Select Warehouse...</option>
+                            {(warehouses.data ?? []).map((wh: any) => (
+                              <option key={wh.id} value={wh.id}>{wh.name}</option>
+                            ))}
+                          </select>
+
+                          <ActionButton
+                            disabled={releaseBatch.isPending || !selectedWarehouses[batch.id]}
+                            onClick={() => releaseBatch.mutate({ 
+                              batchId: batch.id, 
+                              destinationId: selectedWarehouses[batch.id] 
+                            })}
+                            type="button"
+                            variant="secondary"
+                          >
+                            <Send className="h-4 w-4" />
+                            Release
+                          </ActionButton>
+                        </div>
                       ) : (
                         <span className="text-slate-400">No action</span>
                       )}
                     </td>
                   </tr>
                 ))}
+                
                 {!batches.data?.length && (
                   <tr>
                     <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
@@ -186,4 +220,3 @@ export default function ManufacturingPage() {
     </AppShell>
   );
 }
-

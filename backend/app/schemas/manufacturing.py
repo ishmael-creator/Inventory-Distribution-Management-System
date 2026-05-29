@@ -8,7 +8,6 @@ from app.core.enums import BatchStatus
 
 class ProductBatchCreate(BaseModel):
     product_id: uuid.UUID
-    batch_number: str = Field(min_length=2, max_length=100)
     quantity: int = Field(gt=0)
     produced_at: datetime
 
@@ -24,6 +23,13 @@ class ProductBatchRead(BaseModel):
     released_at: datetime | None
     received_at: datetime | None
     created_at: datetime
+    
+    # NEW FIELD: Tells the frontend where the batch is going
+    destination_id: uuid.UUID | None = None
 
     model_config = {"from_attributes": True}
 
+
+# NEW SCHEMA: What the frontend sends when you click "Release"
+class BatchReleaseRequest(BaseModel):
+    destination_id: uuid.UUID

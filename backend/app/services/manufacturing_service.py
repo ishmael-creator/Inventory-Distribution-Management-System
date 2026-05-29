@@ -1,16 +1,15 @@
 import uuid
 from datetime import UTC, datetime
-
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.enums import BatchStatus, LocationType, TransactionType
 from app.models.product import Product, ProductBatch
+from app.models.user import Warehouse  # Ensure Warehouse is imported to verify it exists
 from app.schemas.manufacturing import ProductBatchCreate
 from app.services.audit_service import AuditService
 from app.services.inventory_service import InventoryService
-
 
 class ManufacturingService:
     def __init__(self, db: Session):
@@ -19,9 +18,20 @@ class ManufacturingService:
     def create_batch(self, payload: ProductBatchCreate, manufacturer_id: uuid.UUID) -> ProductBatch:
         if self.db.get(Product, payload.product_id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
-        batch = ProductBatch(**payload.model_dump(), manufacturer_id=manufacturer_id)
+
+        date_part = datetime.now(UTC).strftime("%Y%m%d")
+        random_part = uuid.uuid4().hex[:6].upper()
+        auto_batch_number = f"BAT-{date_part}-{random_part}"
+        
+        batch = ProductBatch(
+            **payload.model_dump(),
+            manufacturer_id=manufacturer_id,
+            batch_number=auto_batch_number 
+        )
+
         self.db.add(batch)
         self.db.flush()
+
         InventoryService(self.db).record_movement(
             product_id=batch.product_id,
             quantity=batch.quantity,
@@ -33,6 +43,7 @@ class ManufacturingService:
             reference_type="product_batch",
             notes=f"Production batch {batch.batch_number} created",
         )
+
         AuditService(self.db).log(
             user_id=manufacturer_id,
             action="product_batch.created",
@@ -40,25 +51,38 @@ class ManufacturingService:
             resource_id=batch.id,
             new_values={"batch_number": batch.batch_number, "quantity": batch.quantity},
         )
+
         self.db.commit()
         self.db.refresh(batch)
+
         return batch
 
-    def release_to_warehouse(self, batch_id: uuid.UUID, user_id: uuid.UUID) -> ProductBatch:
+    # Added destination_id parameter
+    def release_to_warehouse(self, batch_id: uuid.UUID, destination_id: uuid.UUID, user_id: uuid.UUID) -> ProductBatch:
         batch = self.db.scalar(select(ProductBatch).where(ProductBatch.id == batch_id).with_for_update())
+        
         if batch is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found")
-        if batch.status != BatchStatus.DRAFT:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Batch is not releasable")
+        
+        # Fixed logic: Check for AWAITING_RELEASE instead of DRAFT
+        if batch.status != BatchStatus.AWAITING_RELEASE:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Batch is not awaiting release")
+
+        # Verify destination exists
+        if not self.db.get(Warehouse, destination_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Destination warehouse not found")
+
         batch.status = BatchStatus.RELEASED_TO_WAREHOUSE
         batch.released_at = datetime.now(UTC)
+        batch.destination_id = destination_id  # Save destination to DB
+
         AuditService(self.db).log(
             user_id=user_id,
             action="product_batch.released_to_warehouse",
             resource_type="product_batch",
             resource_id=batch.id,
+            new_values={"destination_id": str(destination_id)}
         )
         self.db.commit()
         self.db.refresh(batch)
         return batch
-

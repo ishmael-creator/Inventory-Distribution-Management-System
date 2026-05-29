@@ -33,12 +33,16 @@ class ProductBatch(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     manufacturer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), index=True)
     batch_number: Mapped[str] = mapped_column(String(100))
     quantity: Mapped[int] = mapped_column(Integer)
+    
+    # FIXED: Update default to AWAITING_RELEASE
     status: Mapped[BatchStatus] = mapped_column(
         Enum(BatchStatus, name="batch_status"),
-        default=BatchStatus.DRAFT,
+        default=BatchStatus.AWAITING_RELEASE, 
         index=True,
     )
     produced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
+    
+    # NEW FIELD: Where is this batch going?
+    destination_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)

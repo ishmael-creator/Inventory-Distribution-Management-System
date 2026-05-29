@@ -58,6 +58,10 @@ class Agent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), unique=True)
     hub_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("hubs.id"))
+    
+    # --- ADD THIS LINE ---
+    name: Mapped[str] = mapped_column(String(150), index=True) 
+    
     agent_code: Mapped[str] = mapped_column(String(80), unique=True)
     territory: Mapped[str | None] = mapped_column(String(160))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
