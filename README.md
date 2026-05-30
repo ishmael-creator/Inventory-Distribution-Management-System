@@ -46,8 +46,6 @@ email: admin@example.com
 password: ChangeMe123!
 ```
 
-Change this password before any real deployment.
-
 ## Inventory Rule
 
 Do not build APIs that directly edit `inventory_balances`. Stock must move through services that create `inventory_transactions` and update balances atomically.
@@ -85,3 +83,76 @@ App workflow:
 5. Dispatch approved requests.
 6. Confirm hub receipt.
 7. Open `Inventory Ledger` to confirm warehouse-to-hub movements.
+
+
+## Running the App Locally
+
+### Prerequisites
+Make sure you have installed:
+- Docker Desktop
+- Node.js / npm
+- Git
+
+### 1. Clone the Repository
+```bash
+git clone <https://github.com/ishmael-creator/Inventory-Distribution-Management-System>
+cd Inventory-Distribution-Management-System
+```
+
+### 2. Start the Backend and Database
+Make sure Docker Desktop is running, then run:
+```bash
+docker compose up -d db api
+```
+
+### 3. Run Database Migrations
+```bash
+docker compose exec api alembic upgrade head
+```
+
+### 4. Seed Default Data
+This creates default roles, products, and the admin user.
+```bash
+docker compose exec api python -m app.seed
+```
+**Default login:**
+- **Email:** admin@example.com
+- **Password:** ChangeMe123!
+
+### 5. Start the Frontend
+Open a new terminal:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### 6. Open the App
+- **Frontend:** http://localhost:3000
+- **Backend API:** http://localhost:8000
+- **Swagger API Docs:** http://localhost:8000/docs
+
+---
+
+### Useful Commands
+
+**Check running containers:**
+```bash
+docker compose ps
+```
+
+**View backend logs:**
+```bash
+docker compose logs -f api
+```
+
+**Stop the app:**
+```bash
+docker compose down
+```
+
+**Stop the app and remove the local database volume:**
+```bash
+docker compose down -v
+```
+> **Note:** Use `docker compose down -v` only when you want to completely reset all local database data.
