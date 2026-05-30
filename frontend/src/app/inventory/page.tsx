@@ -1,16 +1,26 @@
 "use client";
 
-import { useMemo, useState, Fragment } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { RefreshCcw, Filter } from "lucide-react";
+import { History, Boxes, Calendar } from "lucide-react";
+
 import { AppShell } from "@/components/layout/app-shell";
-import { ActionButton } from "@/components/ui/action-button";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/stores/auth-store";
 import type { InventoryBalance, InventoryTransaction, ProductPage } from "@/types/inventory";
 
-export default function InventoryPage() {
-  const [locationFilter, setLocationFilter] = useState<string>("ALL");
+export default function InventoryLedgerPage() {
+  const userRole = useAuthStore((state) => state.userRole);
+  
+  // Define who gets to see the global stock balances
+  const isGlobalRole = ["SUPER_ADMIN", "MANAGER", "DISTRIBUTION_TEAM"].includes(userRole || "");
+
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7); // Default to last 7 days
+    return d.toISOString().split("T")[0];
+  });
+  const [endDate, setEndDate] = useState(() => new Date().toISOString().split("T")[0]);
 
   const products = useQuery({
     queryKey: ["products"],
@@ -20,6 +30,7 @@ export default function InventoryPage() {
   const balances = useQuery({
     queryKey: ["balances"],
     queryFn: async () => (await api.get<InventoryBalance[]>("/inventory/balances")).data,
+    enabled: isGlobalRole, // Only fetch balances if the user is a global role to save bandwidth
   });
 
   const transactions = useQuery({
@@ -27,165 +38,148 @@ export default function InventoryPage() {
     queryFn: async () => (await api.get<InventoryTransaction[]>("/inventory/transactions")).data,
   });
 
-  const productNameById = useMemo(
-    () => new Map((products.data?.items ?? []).map((product) => [product.id, product.name])),
-    [products.data?.items],
-  );
+  const productNameById = useMemo(() => new Map((products.data?.items ?? []).map((p) => [p.id, p.name])), [products.data?.items]);
 
-  // 1. Group balances by Location for the sub-row table layout
-  const groupedBalances = useMemo(() => {
-    const groups = new Map<string, { id: string; type: string; products: { name: string; quantity: number }[] }>();
-    
-    (balances.data ?? []).forEach((balance) => {
-      const locKey = balance.location_id;
-      if (!groups.has(locKey)) {
-        groups.set(locKey, {
-          id: balance.location_id,
-          type: balance.location_type,
-          products: [],
-        });
-      }
-      
-      const productName = productNameById.get(balance.product_id) ?? balance.product_id;
-      const availableQty = balance.quantity - balance.reserved_quantity;
-      
-      groups.get(locKey)!.products.push({
-        name: productName,
-        quantity: availableQty,
-      });
-    });
-
-    return Array.from(groups.values());
-  }, [balances.data, productNameById]);
-
-  // 2. Dynamically get unique location types for the transaction filter
-  const uniqueLocationTypes = useMemo(() => {
-    const types = new Set<string>();
-    (transactions.data ?? []).forEach((tx) => {
-      if (tx.from_location_type) types.add(tx.from_location_type);
-      if (tx.to_location_type) types.add(tx.to_location_type);
-    });
-    return Array.from(types);
-  }, [transactions.data]);
-
-  // 3. Filter the transactions
+  // AUTOMATIC & PERMANENT LOG FILTERING
   const filteredTransactions = useMemo(() => {
-    if (locationFilter === "ALL") return transactions.data ?? [];
-    return (transactions.data ?? []).filter(
-      (tx) => tx.from_location_type === locationFilter || tx.to_location_type === locationFilter
-    );
-  }, [transactions.data, locationFilter]);
+    let data = transactions.data ?? [];
 
-  async function refreshAll() {
-    await Promise.all([products.refetch(), balances.refetch(), transactions.refetch()]);
-  }
+    // 1. Enforce Date Range Filter
+    data = data.filter((tx) => {
+      const txDate = new Date(tx.created_at).toISOString().split("T")[0];
+      return txDate >= startDate && txDate <= endDate;
+    });
+
+    // 2. Enforce Strict Role Isolation
+    if (userRole === "MANUFACTURER") {
+      data = data.filter(tx => tx.transaction_type === "PRODUCTION" || tx.from_location_type === "MANUFACTURER");
+    } else if (userRole === "WAREHOUSE_OFFICER") {
+      data = data.filter(tx => tx.to_location_type === "WAREHOUSE" || tx.from_location_type === "WAREHOUSE");
+    } else if (userRole === "HUB_OFFICER") {
+      data = data.filter(tx => tx.to_location_type === "HUB" || tx.from_location_type === "HUB");
+    }
+
+    return data;
+  }, [transactions.data, startDate, endDate, userRole]);
 
   return (
-    <AppShell title="Inventory Ledger" description="Review calculated balances and immutable inventory transactions.">
-      <div className="mb-6 flex justify-end">
-        <ActionButton onClick={refreshAll} type="button" variant="secondary">
-          <RefreshCcw className="h-4 w-4" />
-          Refresh
-        </ActionButton>
-      </div>
-
-      {/* Grouped Balances Table (Pivot Style) */}
-      <section id="balances" className="mb-6 rounded-md border border-line bg-white">
-        <div className="border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold text-ink">Stock by Location</h2>
+    <AppShell title="System Logs & Ledger" description="View system-wide activity and historical transaction logs.">
+      
+      {/* EXCLUSIVE DATE FILTER BAR */}
+      <section className="mb-6 rounded-md border border-line bg-white p-4 shadow-sm flex flex-wrap items-center gap-4">
+        <div className="flex items-center gap-2 text-brand font-semibold">
+          <Calendar className="h-5 w-5" /> Date Range:
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[700px] text-left text-sm">
-            <thead className="bg-panel text-xs uppercase text-slate-500">
-              <tr>
-                <th className="px-4 py-3 w-1/3">Location</th>
-                <th className="px-4 py-3">Product</th>
-                <th className="px-4 py-3 text-right">Available Qty</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {groupedBalances.map((group) => (
-                <Fragment key={group.id}>
-                  {group.products.map((prod, index) => (
-                    <tr key={`${group.id}-${prod.name}`} className="hover:bg-slate-50">
-                      {/* Render the Location column ONLY on the first row of the group, spanning downwards */}
-                      {index === 0 && (
-                        <td
-                          rowSpan={group.products.length}
-                          className="px-4 py-4 align-top border-r border-line bg-white w-1/3"
-                        >
-                          <div className="mb-2"><StatusBadge>{group.type}</StatusBadge></div>
-                          <div className="text-xs text-slate-500 font-mono">{group.id}</div>
-                        </td>
-                      )}
-                      {/* Render Product and Qty as standard sub-rows */}
-                      <td className="px-4 py-3 text-slate-700 font-medium">{prod.name}</td>
-                      <td className="px-4 py-3 text-right font-bold text-ink">{prod.quantity}</td>
-                    </tr>
-                  ))}
-                </Fragment>
-              ))}
-              {!groupedBalances.length && (
-                <tr>
-                  <td colSpan={3} className="px-4 py-8 text-center text-slate-500">
-                    No inventory balances yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <label className="text-sm font-medium text-slate-700">
+          From
+          <input 
+            type="date" 
+            value={startDate} 
+            onChange={(e) => setStartDate(e.target.value)} 
+            className="ml-2 rounded-md border border-line px-3 py-1.5 outline-none focus:border-brand"
+          />
+        </label>
+        <label className="text-sm font-medium text-slate-700">
+          To
+          <input 
+            type="date" 
+            value={endDate} 
+            onChange={(e) => setEndDate(e.target.value)} 
+            className="ml-2 rounded-md border border-line px-3 py-1.5 outline-none focus:border-brand"
+          />
+        </label>
       </section>
 
-      {/* Filterable Transactions Table */}
-      <section className="rounded-md border border-line bg-white">
-        <div className="flex items-center justify-between border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold text-ink">Transaction History</h2>
-          <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4 text-slate-400" />
-            <select
-              className="rounded-md border border-line px-2 py-1 text-sm text-slate-700 outline-none focus:border-brand"
-              value={locationFilter}
-              onChange={(e) => setLocationFilter(e.target.value)}
-            >
-              <option value="ALL">All Locations</option>
-              {uniqueLocationTypes.map((type) => (
-                <option key={type} value={type}>{type.replaceAll("_", " ")}</option>
-              ))}
-            </select>
+      {/* GLOBAL STOCK BALANCES (ONLY VISIBLE TO SUPER_ADMIN, MANAGER, DISTRIBUTION) */}
+      {isGlobalRole && (
+        <section className="mb-8 rounded-md border border-line bg-white shadow-sm">
+          <div className="flex items-center gap-2 border-b border-line bg-slate-50 px-4 py-3">
+            <Boxes className="h-5 w-5 text-slate-600" />
+            <h2 className="text-sm font-semibold text-ink">Global Stock by Location</h2>
           </div>
+          <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+            <table className="w-full text-left text-sm relative">
+              <thead className="bg-panel text-xs uppercase text-slate-500 sticky top-0 shadow-sm">
+                <tr>
+                  <th className="px-4 py-3">Location Type</th>
+                  <th className="px-4 py-3">Product Name</th>
+                  <th className="px-4 py-3">Total Held</th>
+                  <th className="px-4 py-3">Reserved</th>
+                  <th className="px-4 py-3 text-red-600">Damaged</th>
+                  <th className="px-4 py-3 font-bold text-brand">Available to Move</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {(balances.data ?? []).map((balance) => {
+                  const available = balance.quantity - (balance.reserved_quantity || 0) - (balance.damaged_quantity || 0);
+                  return (
+                    <tr key={balance.id} className="hover:bg-slate-50">
+                      <td className="px-4 py-3 font-semibold text-slate-700">{balance.location_type}</td>
+                      <td className="px-4 py-3 text-slate-600">{productNameById.get(balance.product_id) ?? balance.product_id}</td>
+                      <td className="px-4 py-3">{balance.quantity}</td>
+                      <td className="px-4 py-3 text-amber-600">{balance.reserved_quantity || 0}</td>
+                      <td className="px-4 py-3 text-red-600">{balance.damaged_quantity || 0}</td>
+                      <td className="px-4 py-3 font-bold text-brand">{available}</td>
+                    </tr>
+                  );
+                })}
+                {!balances.data?.length && (
+                  <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No balances recorded across the system.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* ISOLATED TRANSACTION LOGS (VISIBLE TO EVERYONE, BUT FILTERED BY ROLE) */}
+      <section className="rounded-md border border-line bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-line bg-slate-50 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <History className="h-5 w-5 text-slate-600" />
+            <h2 className="text-sm font-semibold text-ink">System Action Logs</h2>
+          </div>
+          <span className="text-xs font-semibold text-slate-500 bg-white px-2 py-1 rounded border border-line">
+            Showing {filteredTransactions.length} events
+          </span>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1000px] text-left text-sm">
-            <thead className="bg-panel text-xs uppercase text-slate-500">
+        <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+          <table className="w-full min-w-[900px] text-left text-sm relative">
+            <thead className="bg-panel text-xs uppercase text-slate-500 sticky top-0 shadow-sm">
               <tr>
                 <th className="px-4 py-3">Date & Time</th>
+                <th className="px-4 py-3">Action Type</th>
                 <th className="px-4 py-3">Product</th>
-                <th className="px-4 py-3">Type</th>
-                <th className="px-4 py-3">Quantity</th>
-                <th className="px-4 py-3">From</th>
-                <th className="px-4 py-3">To</th>
+                <th className="px-4 py-3">Qty</th>
+                <th className="px-4 py-3">Movement Path</th>
+                <th className="px-4 py-3">System Notes</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
-              {filteredTransactions.map((transaction) => (
-                <tr key={transaction.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
-                    {new Date(transaction.created_at).toLocaleString()}
+              {filteredTransactions.map((tx) => (
+                <tr key={tx.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
+                    {new Date(tx.created_at).toLocaleString()}
                   </td>
-                  <td className="px-4 py-3 font-medium text-ink">{productNameById.get(transaction.product_id) ?? transaction.product_id}</td>
                   <td className="px-4 py-3">
-                    <StatusBadge>{transaction.transaction_type.replaceAll("_", " ")}</StatusBadge>
+                    <span className="font-semibold text-brand text-xs uppercase tracking-wider bg-teal-50 px-2 py-1 rounded">
+                      {tx.transaction_type.replaceAll("_", " ")}
+                    </span>
                   </td>
-                  <td className="px-4 py-3 font-semibold text-slate-900">{transaction.quantity}</td>
-                  <td className="px-4 py-3 text-xs text-slate-600">{transaction.from_location_type ?? "-"}</td>
-                  <td className="px-4 py-3 text-xs text-slate-600">{transaction.to_location_type ?? "-"}</td>
+                  <td className="px-4 py-3 font-medium text-ink">{productNameById.get(tx.product_id) ?? tx.product_id}</td>
+                  <td className="px-4 py-3 font-bold text-slate-700">{tx.quantity}</td>
+                  <td className="px-4 py-3 text-xs font-mono text-slate-500">
+                    {tx.from_location_type ? tx.from_location_type.substring(0, 3) : "---"} ➔ {tx.to_location_type ? tx.to_location_type.substring(0, 3) : "---"}
+                  </td>
+                  <td className="px-4 py-3 text-slate-500 italic max-w-xs truncate" title={tx.notes || ""}>
+                    {tx.notes || "-"}
+                  </td>
                 </tr>
               ))}
-              {!filteredTransactions.length && (
+              {filteredTransactions.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
-                    No transactions found for this location.
+                  <td colSpan={6} className="px-4 py-12 text-center text-slate-500">
+                    No activity found for your role within this date range.
                   </td>
                 </tr>
               )}
@@ -193,6 +187,7 @@ export default function InventoryPage() {
           </table>
         </div>
       </section>
+
     </AppShell>
   );
 }

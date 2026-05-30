@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_permissions
+from app.api.deps import require_permissions, get_current_user
 from app.db.session import get_db
 from app.models.inventory import AllocationRequest, DispatchOrder
 from app.models.user import Hub, User
@@ -21,13 +21,18 @@ from app.services.distribution_service import DistributionService
 
 router = APIRouter()
 
-
 @router.get("/hubs", response_model=list[HubRead])
 def list_hubs(
-    _: User = Depends(require_permissions("hubs.read")),
-    db: Session = Depends(get_db),
-) -> list[Hub]:
-    return list(db.scalars(select(Hub).order_by(Hub.name)).all())
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    query = select(Hub)
+    
+    # STRICT ISOLATION: If they are a Hub Officer, they only get to see their own Hub
+    if current_user.role.code == "HUB_OFFICER" and current_user.assigned_hub_id:
+        query = query.where(Hub.id == current_user.assigned_hub_id)
+        
+    return list(db.scalars(query.order_by(Hub.name)).all())
 
 
 @router.post("/hubs", response_model=HubRead, status_code=201)
@@ -100,4 +105,3 @@ def receive_dispatch(
     db: Session = Depends(get_db),
 ) -> DispatchOrder:
     return DistributionService(db).receive_dispatch(payload, current_user.id)
-

@@ -2,11 +2,12 @@
 
 import { useMemo, useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Truck, CheckCircle, Package, ClipboardList, Check, X, Boxes } from "lucide-react";
+import { Truck, CheckCircle, Package, ClipboardList, Check, X, Boxes, Ship, ChevronDown, ChevronUp } from "lucide-react";
 
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionButton } from "@/components/ui/action-button";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { SelectField, TextField } from "@/components/ui/form-field";
 import { api } from "@/lib/api";
 import type { ProductPage, AllocationRequest, HubRecord, InventoryBalance, DispatchOrder } from "@/types/inventory";
 
@@ -14,6 +15,10 @@ export default function WarehouseDashboardPage() {
   const queryClient = useQueryClient();
 
   const [activeWarehouseId, setActiveWarehouseId] = useState<string>("");
+  
+  const [isImportFormOpen, setIsImportFormOpen] = useState(false);
+  const [importForm, setImportForm] = useState({ product_id: "", quantity: "100", notes: "" });
+  const [error, setError] = useState<string | null>(null);
 
   const warehouses = useQuery({
     queryKey: ["warehouses"],
@@ -48,7 +53,6 @@ export default function WarehouseDashboardPage() {
     queryFn: async () => (await api.get<InventoryBalance[]>("/inventory/balances")).data 
   });
 
-  // NEW: Fetch dispatches to track if a request has been sent
   const dispatches = useQuery({ 
     queryKey: ["dispatches"], 
     queryFn: async () => (await api.get<DispatchOrder[]>("/distribution/dispatches")).data 
@@ -56,9 +60,11 @@ export default function WarehouseDashboardPage() {
 
   const productNameById = useMemo(() => new Map((products.data?.items ?? []).map((product) => [product.id, product.name])), [products.data?.items]);
   const hubNameById = useMemo(() => new Map((hubs.data ?? []).map((item) => [item.id, item.name])), [hubs.data]);
-  
-  // NEW: Map dispatches to their parent requests
   const dispatchByRequestId = useMemo(() => new Map((dispatches.data ?? []).filter((d) => d.allocation_request_id).map((d) => [d.allocation_request_id, d])), [dispatches.data]);
+
+  const importedProducts = useMemo(() => {
+    return (products.data?.items ?? []).filter(p => p.sku === "EPC" || p.name === "EPC");
+  }, [products.data?.items]);
 
   useEffect(() => {
     if (warehouses.data && warehouses.data.length > 0 && !activeWarehouseId) {
@@ -89,7 +95,8 @@ export default function WarehouseDashboardPage() {
     },
   });
 
-  const approveRequest = useMutation({
+  // CHANGED to Accept
+  const acceptRequest = useMutation({
     mutationFn: async (requestId: string) => api.post(`/distribution/requests/${requestId}/approve`, {}),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["distribution-requests"] });
@@ -113,25 +120,68 @@ export default function WarehouseDashboardPage() {
     },
   });
 
+  const logDirectImport = useMutation({
+    mutationFn: async () => api.post(`/warehouses/${activeWarehouseId}/import`, {
+      product_id: importForm.product_id,
+      quantity: Number(importForm.quantity),
+      notes: importForm.notes || "Direct import from external supplier"
+    }),
+    onSuccess: async () => {
+      setImportForm({ product_id: "", quantity: "100", notes: "" });
+      setError(null);
+      setIsImportFormOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["warehouse-balances"] });
+      await queryClient.invalidateQueries({ queryKey: ["transactions"] });
+    },
+    onError: () => setError("Failed to log import. Make sure you selected a valid product."),
+  });
+
   return (
-    <AppShell title="Warehouse Operations" description="Manage incoming deliveries, inventory, and hub requests.">
+    <AppShell title="Central Warehouse" description="Manage incoming deliveries, direct imports, and hub requests.">
       
-      <div className="mb-6 flex flex-wrap gap-2 border-b border-line pb-4">
-        {(warehouses.data ?? []).map((wh: any) => (
+      {error && <div className="mb-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+
+      {/* DIRECT IMPORT BAR */}
+      <section className="mb-6">
+        <div className="rounded-md border border-line bg-white shadow-sm overflow-hidden transition-all">
           <button
-            key={wh.id}
-            onClick={() => setActiveWarehouseId(wh.id)}
-            className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${
-              activeWarehouseId === wh.id ? "bg-brand text-white shadow-sm" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
+            type="button"
+            onClick={() => setIsImportFormOpen(!isImportFormOpen)}
+            className="flex w-full items-center justify-between bg-white px-6 py-4 hover:bg-slate-50 transition-colors focus:outline-none"
           >
-            {wh.name}
+            <div className="flex items-center gap-3">
+              <Ship className="h-6 w-6 text-brand" />
+              <h2 className="text-lg font-semibold text-ink">Log Direct Import (External Sourcing)</h2>
+            </div>
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
+              {isImportFormOpen ? "Close" : "Open Form"}
+              {isImportFormOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+            </div>
           </button>
-        ))}
-      </div>
+
+          {isImportFormOpen && (
+            <div className="border-t border-line bg-slate-50/50 p-6">
+              <form onSubmit={(e) => { e.preventDefault(); logDirectImport.mutate(); }}>
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  <SelectField label="Imported Product" value={importForm.product_id} onChange={(e) => setImportForm({ ...importForm, product_id: e.target.value })} required>
+                    <option value="">Select product</option>
+                    {importedProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </SelectField>
+                  <TextField label="Quantity Received" min={1} type="number" value={importForm.quantity} onChange={(e) => setImportForm({ ...importForm, quantity: e.target.value })} required />
+                  <TextField label="Import Notes (Optional)" value={importForm.notes} onChange={(e) => setImportForm({ ...importForm, notes: e.target.value })} />
+                  <div className="md:col-span-2 lg:col-span-3 mt-2">
+                    <ActionButton disabled={logDirectImport.isPending || !activeWarehouseId} type="submit" className="w-full h-12 text-base">
+                      {logDirectImport.isPending ? "Processing..." : "Add Import to Inventory"}
+                    </ActionButton>
+                  </div>
+                </div>
+              </form>
+            </div>
+          )}
+        </div>
+      </section>
 
       <div className="grid gap-6 xl:grid-cols-2">
-        {/* INBOUND QUEUE (From Manufacturing) */}
         <section className="rounded-md border border-line bg-white shadow-sm h-fit">
           <div className="flex items-center gap-2 border-b border-line bg-blue-50/50 px-4 py-3">
             <Truck className="h-5 w-5 text-blue-600" />
@@ -140,7 +190,7 @@ export default function WarehouseDashboardPage() {
           </div>
           <div className="p-4 space-y-4">
             {incomingDeliveries.length === 0 ? (
-              <div className="py-8 text-center text-slate-500 text-sm">No trucks arriving.</div>
+              <div className="py-8 text-center text-slate-500 text-sm">No trucks arriving from manufacturing.</div>
             ) : (
               incomingDeliveries.map((batch) => (
                 <div key={batch.id} className="flex items-center justify-between rounded-lg border border-line bg-white p-4 shadow-sm">
@@ -160,7 +210,6 @@ export default function WarehouseDashboardPage() {
           </div>
         </section>
 
-        {/* OUTBOUND QUEUE (To Hubs) */}
         <section className="rounded-md border border-line bg-white shadow-sm h-fit">
           <div className="flex items-center gap-2 border-b border-line bg-amber-50/50 px-4 py-3">
             <ClipboardList className="h-5 w-5 text-amber-600" />
@@ -169,7 +218,7 @@ export default function WarehouseDashboardPage() {
           </div>
           <div className="p-4 space-y-4">
             {activeRequests.length === 0 ? (
-              <div className="py-8 text-center text-slate-500 text-sm">No pending or approved requests.</div>
+              <div className="py-8 text-center text-slate-500 text-sm">No pending or accepted requests.</div>
             ) : (
               activeRequests.map((req) => {
                 const isDispatched = !!dispatchByRequestId.get(req.id);
@@ -184,16 +233,16 @@ export default function WarehouseDashboardPage() {
                       </div>
                       
                       <StatusBadge tone={req.status === "PENDING" ? "warning" : (isDispatched ? "info" : "success")}>
-                        {req.status === "PENDING" ? "PENDING" : (isDispatched ? "DISPATCHED" : "APPROVED")}
+                        {req.status === "PENDING" ? "PENDING" : (isDispatched ? "DISPATCHED" : "ACCEPTED")}
                       </StatusBadge>
                     </div>
                     
                     {req.status === "PENDING" && (
                       <div className="flex gap-2">
-                        <ActionButton className="w-1/2 bg-green-600 hover:bg-green-700" onClick={() => approveRequest.mutate(req.id)} disabled={approveRequest.isPending || rejectRequest.isPending}>
-                          <Check className="h-4 w-4 mr-1" /> Approve
+                        <ActionButton className="w-1/2 bg-green-600 hover:bg-green-700" onClick={() => acceptRequest.mutate(req.id)} disabled={acceptRequest.isPending || rejectRequest.isPending}>
+                          <Check className="h-4 w-4 mr-1" /> Accept
                         </ActionButton>
-                        <ActionButton className="w-1/2" variant="secondary" onClick={() => rejectRequest.mutate(req.id)} disabled={approveRequest.isPending || rejectRequest.isPending}>
+                        <ActionButton className="w-1/2" variant="secondary" onClick={() => rejectRequest.mutate(req.id)} disabled={acceptRequest.isPending || rejectRequest.isPending}>
                           <X className="h-4 w-4 mr-1" /> Reject
                         </ActionButton>
                       </div>
@@ -223,7 +272,6 @@ export default function WarehouseDashboardPage() {
         </section>
       </div>
 
-      {/* INTERNAL WAREHOUSE INVENTORY VIEWER */}
       <section className="mt-8 rounded-md border border-line bg-white shadow-sm">
         <div className="flex items-center gap-2 border-b border-line px-4 py-3">
           <Boxes className="h-5 w-5 text-slate-600" />
@@ -238,13 +286,18 @@ export default function WarehouseDashboardPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
-              {currentInventory.map((balance) => (
-                <tr key={balance.id}>
-                  <td className="px-4 py-3 font-medium text-ink">{productNameById.get(balance.product_id) ?? balance.product_id}</td>
-                  <td className="px-4 py-3 font-bold text-brand">{balance.quantity - balance.reserved_quantity} Units</td>
-                </tr>
-              ))}
-              {!currentInventory.length && <tr><td colSpan={2} className="px-4 py-8 text-center text-slate-500">This warehouse is currently empty.</td></tr>}
+              {/* Loop over Products Catalog instead of Balances to show 0 stock items */}
+              {(products.data?.items ?? []).map((product) => {
+                const bal = currentInventory.find(b => b.product_id === product.id);
+                const qty = bal ? bal.quantity - bal.reserved_quantity : 0;
+                return (
+                  <tr key={product.id}>
+                    <td className="px-4 py-3 font-medium text-ink">{product.name}</td>
+                    <td className="px-4 py-3 font-bold text-brand">{qty} Units</td>
+                  </tr>
+                );
+              })}
+              {!products.data?.items?.length && <tr><td colSpan={2} className="px-4 py-8 text-center text-slate-500">No products configured.</td></tr>}
             </tbody>
           </table>
         </div>
