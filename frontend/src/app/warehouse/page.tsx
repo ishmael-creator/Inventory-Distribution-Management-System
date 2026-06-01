@@ -232,7 +232,7 @@ export default function WarehouseDashboardPage() {
                         <p className="text-sm text-slate-600">Requested: {req.quantity} Units</p>
                       </div>
                       
-                      <StatusBadge tone={req.status === "PENDING" ? "warning" : (isDispatched ? "info" : "success")}>
+                      <StatusBadge tone={req.status === "PENDING" ? "warning" : (isDispatched ? "neutral" : "success")}>
                         {req.status === "PENDING" ? "PENDING" : (isDispatched ? "DISPATCHED" : "ACCEPTED")}
                       </StatusBadge>
                     </div>

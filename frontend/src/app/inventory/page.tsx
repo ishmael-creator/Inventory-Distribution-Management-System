@@ -111,14 +111,14 @@ export default function InventoryLedgerPage() {
               </thead>
               <tbody className="divide-y divide-line">
                 {(balances.data ?? []).map((balance) => {
-                  const available = balance.quantity - (balance.reserved_quantity || 0) - (balance.damaged_quantity || 0);
+                  const available = balance.quantity - (balance.reserved_quantity || 0);
                   return (
                     <tr key={balance.id} className="hover:bg-slate-50">
                       <td className="px-4 py-3 font-semibold text-slate-700">{balance.location_type}</td>
                       <td className="px-4 py-3 text-slate-600">{productNameById.get(balance.product_id) ?? balance.product_id}</td>
                       <td className="px-4 py-3">{balance.quantity}</td>
                       <td className="px-4 py-3 text-amber-600">{balance.reserved_quantity || 0}</td>
-                      <td className="px-4 py-3 text-red-600">{balance.damaged_quantity || 0}</td>
+                      <td className="px-4 py-3 text-red-600">0</td>
                       <td className="px-4 py-3 font-bold text-brand">{available}</td>
                     </tr>
                   );
@@ -171,9 +171,9 @@ export default function InventoryLedgerPage() {
                   <td className="px-4 py-3 text-xs font-mono text-slate-500">
                     {tx.from_location_type ? tx.from_location_type.substring(0, 3) : "---"} ➔ {tx.to_location_type ? tx.to_location_type.substring(0, 3) : "---"}
                   </td>
-                  <td className="px-4 py-3 text-slate-500 italic max-w-xs truncate" title={tx.notes || ""}>
-                    {tx.notes || "-"}
-                  </td>
+                  <td className="px-4 py-3 text-slate-500 italic max-w-xs truncate">
+                      -
+                </td>
                 </tr>
               ))}
               {filteredTransactions.length === 0 && (

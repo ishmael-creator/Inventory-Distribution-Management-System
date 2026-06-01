@@ -16,10 +16,9 @@ function toDatetimeLocal(date: Date) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
-function batchTone(status: ProductBatch["status"]) {
+function batchTone(status: string): "success" | "warning" | "neutral" | undefined {
   if (status === "RECEIVED_AT_WAREHOUSE") return "success";
-  if (status === "RELEASED_TO_WAREHOUSE") return "info";
-  if (status === "AWAITING_RELEASE") return "warning";
+  if (status === "RELEASED_TO_WAREHOUSE") return "warning";
   return "neutral";
 }
 
