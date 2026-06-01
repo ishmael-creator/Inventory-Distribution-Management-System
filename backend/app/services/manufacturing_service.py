@@ -76,6 +76,21 @@ class ManufacturingService:
         batch.released_at = datetime.now(UTC)
         batch.destination_id = destination_id  # Save destination to DB
 
+        # THE FIX: Deduct the stock from the Manufacturer and put it In-Transit
+        InventoryService(self.db).record_movement(
+            product_id=batch.product_id,
+            quantity=batch.quantity,
+            transaction_type=TransactionType.TRANSFER,
+            created_by=user_id,
+            from_location_type=LocationType.MANUFACTURER,
+            from_location_id=batch.manufacturer_id,
+            to_location_type=None,  # Leaves it in-transit until Warehouse receipt
+            to_location_id=None,
+            reference_id=batch.id,
+            reference_type="product_batch",
+            notes=f"Released batch {batch.batch_number} to warehouse",
+        )
+
         AuditService(self.db).log(
             user_id=user_id,
             action="product_batch.released_to_warehouse",

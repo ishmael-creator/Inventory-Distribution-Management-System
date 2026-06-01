@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { LogOut, ShieldAlert } from "lucide-react";
 import { Sidebar } from "@/components/layout/sidebar";
@@ -7,7 +8,17 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { useAuthStore } from "@/stores/auth-store";
 
 export function AppShell({ title, description, children }: { title: string; description: string; children: ReactNode; }) {
+  const router = useRouter();
   const { accessToken, userRole, isOverrideEnabled, setAccessToken, setOverrideEnabled } = useAuthStore();
+
+  const handleSignOut = () => {
+    // 1. Wipe all local data
+    setAccessToken(null);
+    useAuthStore.setState({ userId: null, userRole: null, isOverrideEnabled: false });
+    
+    // 2. Physically move the browser to the login page
+    router.push("/login");
+  };
 
   return (
     <main className="flex min-h-screen bg-[#eef2f6]">
@@ -44,7 +55,7 @@ export function AppShell({ title, description, children }: { title: string; desc
               {accessToken ? (
                 <button
                   className="flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                  onClick={() => setAccessToken(null)}
+                  onClick={handleSignOut}
                   type="button"
                 >
                   <LogOut className="h-4 w-4" />
