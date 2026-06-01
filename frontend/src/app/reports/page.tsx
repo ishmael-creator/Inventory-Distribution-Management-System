@@ -70,7 +70,7 @@ export default function ReportsPage() {
       tx.quantity.toString(),
       tx.from_location_type || "N/A",
       tx.to_location_type || "N/A",
-      `"${tx.notes || ""}"` // wrap in quotes to prevent comma breaking
+      `""` // wrap in quotes to prevent comma breaking
     ]);
 
     const csvContent = [headers.join(","), ...rows.map(e => e.join(","))].join("\n");

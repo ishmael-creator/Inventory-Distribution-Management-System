@@ -184,7 +184,7 @@ export default function DashboardPage() {
                 <Pie data={stockDistribution} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={5} dataKey="value">
                   {stockDistribution.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
                 </Pie>
-                <RechartsTooltip formatter={(value: number) => value.toLocaleString()} />
+                <RechartsTooltip formatter={(value) => typeof value === "number" ? value.toLocaleString() : value} />
                 <Legend />
               </PieChart>
             </ResponsiveContainer>

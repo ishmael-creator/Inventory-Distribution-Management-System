@@ -270,9 +270,9 @@ export default function HubsPage() {
             <tbody className="divide-y divide-line">
               {(products.data?.items ?? []).map((product) => {
                 const bal = currentInventory.find(b => b.product_id === product.id);
-                const total = bal ? bal.quantity : 0;
-                const damaged = bal?.damaged_quantity || 0; 
-                const reserved = bal?.reserved_quantity || 0;
+                const damaged = 0;
+                const reserved = bal?.reserved_quantity || 0; 
+                const total = bal?.quantity || 0;
                 const sellable = total - reserved - damaged;
 
                 return (
