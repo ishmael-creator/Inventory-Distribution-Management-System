@@ -18,8 +18,9 @@ services:
   api:
     build:
       context: ./backend
+    # THE FIX: Pointed directly to your actual .env file
     env_file:
-      - ./backend/.env.example
+      - ./backend/.env
     depends_on:
       db:
         condition: service_healthy
@@ -31,4 +32,3 @@ services:
 
 volumes:
   postgres_data:
-

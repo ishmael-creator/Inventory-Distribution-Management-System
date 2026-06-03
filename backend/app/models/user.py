@@ -29,6 +29,9 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     hashed_password: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     
+    # THE FIX: Added the security flag for forced password resets
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    
     role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("roles.id"))
     
     # Link Hub Officers to a specific Hub

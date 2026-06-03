@@ -4,6 +4,7 @@ import uuid
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from fastapi import status
 
 from app.api.deps import get_current_user, require_permissions
 from app.core.enums import LocationType, TransactionType
