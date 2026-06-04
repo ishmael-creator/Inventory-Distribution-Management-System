@@ -6,17 +6,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth-store";
 import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip as RechartsTooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
 } from "recharts";
 import { Package, ArrowRightLeft, MapPin, Calendar, Factory } from "lucide-react";
 import type { InventoryBalance, InventoryTransaction, ProductPage } from "@/types/inventory";
@@ -50,13 +40,37 @@ export default function DashboardPage() {
 
   const productNameById = useMemo(() => new Map((products.data?.items ?? []).map((p) => [p.id, p.name])), [products.data?.items]);
 
-  // Dynamic Labels based on Role
-  const stockLabel = userRole === "MANUFACTURER" ? "Current Factory Stock" 
+  // THE FIX: Strict Dashboard Blinders for Stock Labels
+  const stockLabel = (userRole === "SUPER_ADMIN" || userRole === "MANAGER") ? "Global Active Stock" 
+                   : userRole === "MANUFACTURER" ? "Current Factory Stock"
                    : userRole === "WAREHOUSE_OFFICER" ? "Current Warehouse Stock"
                    : userRole === "HUB_OFFICER" ? "Current Hub Stock"
-                   : "Global Active Stock";
+                   : "Total Accessible Stock";
 
-  // Filter Transactions by Date AND Role
+  // THE FIX: Strict Dashboard Blinders for Stock Data
+  const stockDistribution = useMemo(() => {
+    let data = balances.data ?? [];
+    
+    // Wipe out global data based on role
+    if (userRole === "MANUFACTURER") {
+      data = data.filter(b => b.location_type === "MANUFACTURER");
+    } else if (userRole === "WAREHOUSE_OFFICER") {
+      data = data.filter(b => b.location_type === "WAREHOUSE");
+    } else if (userRole === "HUB_OFFICER") {
+      data = data.filter(b => b.location_type === "HUB");
+    } else if (userRole === "DISTRIBUTION_TEAM") {
+      data = []; // Distribution generally facilitates but holds 0 physical inventory
+    }
+
+    const grouped = data.reduce((acc, curr) => {
+      acc[curr.location_type] = (acc[curr.location_type] || 0) + curr.quantity;
+      return acc;
+    }, {} as Record<string, number>);
+    
+    return Object.entries(grouped).map(([name, value]) => ({ name, value }));
+  }, [balances.data, userRole]);
+
+  // THE FIX: Strict Dashboard Blinders for Transactions
   const filteredTransactions = useMemo(() => {
     let data = transactions.data ?? [];
 
@@ -65,7 +79,9 @@ export default function DashboardPage() {
       return txDate >= startDate && txDate <= endDate;
     });
 
-    if (userRole === "MANUFACTURER") {
+    if (userRole === "SUPER_ADMIN" || userRole === "MANAGER") {
+      // Admins see everything
+    } else if (userRole === "MANUFACTURER") {
       data = data.filter(tx => tx.transaction_type === "PRODUCTION" || tx.from_location_type === "MANUFACTURER");
     } else if (userRole === "WAREHOUSE_OFFICER") {
       data = data.filter(tx => tx.to_location_type === "WAREHOUSE" || tx.from_location_type === "WAREHOUSE");
@@ -76,22 +92,6 @@ export default function DashboardPage() {
     return data;
   }, [transactions.data, startDate, endDate, userRole]);
 
-  // Filter Balances by Role for the Pie Chart
-  const stockDistribution = useMemo(() => {
-    let data = balances.data ?? [];
-    
-    if (userRole === "MANUFACTURER") data = data.filter(b => b.location_type === "MANUFACTURER");
-    if (userRole === "WAREHOUSE_OFFICER") data = data.filter(b => b.location_type === "WAREHOUSE");
-    if (userRole === "HUB_OFFICER") data = data.filter(b => b.location_type === "HUB");
-
-    const grouped = data.reduce((acc, curr) => {
-      acc[curr.location_type] = (acc[curr.location_type] || 0) + curr.quantity;
-      return acc;
-    }, {} as Record<string, number>);
-    
-    return Object.entries(grouped).map(([name, value]) => ({ name, value }));
-  }, [balances.data, userRole]);
-
   const activityData = useMemo(() => {
     const grouped = filteredTransactions.reduce((acc, curr) => {
       acc[curr.transaction_type] = (acc[curr.transaction_type] || 0) + 1;
@@ -100,7 +100,6 @@ export default function DashboardPage() {
     return Object.entries(grouped).map(([name, count]) => ({ name, count }));
   }, [filteredTransactions]);
 
-  // NEW: Total Produced by Product (For Manufacturers & Admins)
   const productionTotals = useMemo(() => {
     const prodTx = filteredTransactions.filter(tx => tx.transaction_type === "PRODUCTION");
     const grouped = prodTx.reduce((acc, tx) => {
@@ -121,24 +120,13 @@ export default function DashboardPage() {
   return (
     <AppShell title={`${userRole?.replace("_", " ") || "System"} Dashboard`} description="Role-specific overview of your inventory operations.">
       
-      {/* FILTER BAR */}
       <section className="mb-6 flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-2 text-brand font-semibold">
           <Calendar className="h-5 w-5" /> Filter Metrics:
         </div>
-        <input 
-          type="date" 
-          value={startDate} 
-          onChange={(e) => setStartDate(e.target.value)} 
-          className="rounded-md border border-line px-3 py-1.5 outline-none focus:border-brand text-sm"
-        />
+        <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="rounded-md border border-line px-3 py-1.5 outline-none focus:border-brand text-sm" />
         <span className="text-slate-400">to</span>
-        <input 
-          type="date" 
-          value={endDate} 
-          onChange={(e) => setEndDate(e.target.value)} 
-          className="rounded-md border border-line px-3 py-1.5 outline-none focus:border-brand text-sm"
-        />
+        <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="rounded-md border border-line px-3 py-1.5 outline-none focus:border-brand text-sm" />
       </section>
 
       <div className="mb-6 grid gap-6 md:grid-cols-3">
@@ -165,12 +153,11 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* NEW: Total Produced Module for Manufacturers */}
       {(userRole === "MANUFACTURER" || userRole === "SUPER_ADMIN" || userRole === "MANAGER") && (
         <section className="mb-6 rounded-md border border-line bg-white shadow-sm">
           <div className="flex items-center gap-2 border-b border-line bg-slate-50 px-4 py-3">
             <Factory className="h-5 w-5 text-slate-600" />
-            <h2 className="text-sm font-semibold text-ink">Total Produced by Product (In Selected Date Range)</h2>
+            <h2 className="text-sm font-semibold text-ink">Total Produced by Product</h2>
           </div>
           <div className="p-4 grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {productionTotals.map((item, idx) => (

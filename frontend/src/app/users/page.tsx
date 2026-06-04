@@ -12,8 +12,10 @@ import { api } from "@/lib/api";
 
 export default function UserManagementPage() {
   const queryClient = useQueryClient();
-  const [form, setForm] = useState({ full_name: "", email: "", password: "", role_code: "", assigned_hub_id: "" });
+  // THE FIX: Removed 'password' from local state
+  const [form, setForm] = useState({ full_name: "", email: "", role_code: "", assigned_hub_id: "" });
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   const users = useQuery({ 
     queryKey: ["users"], 
@@ -27,19 +29,26 @@ export default function UserManagementPage() {
 
   const createUser = useMutation({
     mutationFn: async () => {
+      // THE FIX: Pointed to the new secure Auth route and mapped hub_id correctly
       const payload = {
-        ...form,
-        // Only send the hub ID if they are a Hub Officer
-        assigned_hub_id: form.role_code === "HUB_OFFICER" && form.assigned_hub_id ? form.assigned_hub_id : null
+        full_name: form.full_name,
+        email: form.email,
+        role_code: form.role_code,
+        hub_id: form.role_code === "HUB_OFFICER" && form.assigned_hub_id ? form.assigned_hub_id : null
       };
-      return api.post("/users", payload);
+      return api.post("/auth/create-user", payload);
     },
     onSuccess: async () => {
-      setForm({ full_name: "", email: "", password: "", role_code: "", assigned_hub_id: "" });
+      setForm({ full_name: "", email: "", role_code: "", assigned_hub_id: "" });
       setError(null);
+      // THE FIX: Added success message so you know to check the terminal
+      setSuccess("User created successfully! Check your backend terminal for their temporary password.");
       await queryClient.invalidateQueries({ queryKey: ["users"] });
     },
-    onError: (err: any) => setError(err.response?.data?.detail || "Failed to create user."),
+    onError: (err: any) => {
+      setSuccess(null);
+      setError(err.response?.data?.detail || "Failed to create user.");
+    }
   });
 
   const toggleAccess = useMutation({
@@ -81,6 +90,7 @@ export default function UserManagementPage() {
   return (
     <AppShell title="User Management" description="Provision system access and manage staff roles.">
       {error && <div className="mb-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      {success && <div className="mb-4 rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">{success}</div>}
 
       <div className="grid gap-6 xl:grid-cols-[380px_1fr]">
         <form onSubmit={(e) => { e.preventDefault(); createUser.mutate(); }} className="rounded-md border border-line bg-white p-6 h-fit shadow-sm">
@@ -92,7 +102,6 @@ export default function UserManagementPage() {
           <div className="grid gap-4">
             <TextField label="Full Name" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} required />
             <TextField label="Email Address" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
-            <TextField label="Temporary Password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
             
             <SelectField label="System Role" value={form.role_code} onChange={(e) => setForm({ ...form, role_code: e.target.value, assigned_hub_id: "" })} required>
               <option value="">Select Role...</option>

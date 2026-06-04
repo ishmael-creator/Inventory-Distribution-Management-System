@@ -5,9 +5,12 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.enums import BatchStatus, LocationType, TransactionType
+# THE FIX: Added RoleCode to imports
+from app.core.enums import BatchStatus, LocationType, TransactionType, RoleCode
 from app.models.product import ProductBatch
-from app.models.user import Warehouse
+# THE FIX: Added User, Role, and Notification to imports
+from app.models.user import Warehouse, User, Role
+from app.models.notification import Notification
 from app.schemas.warehouse import WarehouseCreate, WarehouseReceiptCreate
 from app.services.audit_service import AuditService
 from app.services.inventory_service import InventoryService
@@ -16,6 +19,22 @@ from app.services.inventory_service import InventoryService
 class WarehouseService:
     def __init__(self, db: Session):
         self.db = db
+
+    # THE FIX: Helper function to broadcast to roles
+    def _notify_role(self, role_code: str, title: str, message: str, ref_id: str, ref_type: str):
+        users = self.db.scalars(
+            select(User).join(Role).where(Role.code == role_code, User.is_active == True)
+        ).all()
+        for user in users:
+            notif = Notification(
+                id=uuid.uuid4(),
+                user_id=user.id,
+                title=title,
+                message=message,
+                reference_id=ref_id,
+                reference_type=ref_type
+            )
+            self.db.add(notif)
 
     def create_warehouse(self, payload: WarehouseCreate, user_id: uuid.UUID) -> Warehouse:
         warehouse = Warehouse(**payload.model_dump())
@@ -65,7 +84,27 @@ class WarehouseService:
             resource_id=batch.id,
             new_values={"warehouse_id": str(payload.warehouse_id), "quantity_received": payload.quantity_received},
         )
+
+        # THE FIX: 1. Target the specific manufacturer who made this batch
+        notif_manu = Notification(
+            id=uuid.uuid4(),
+            user_id=batch.manufacturer_id,
+            title="Batch Received at Warehouse",
+            message=f"Your batch {batch.batch_number} ({payload.quantity_received} units) has been successfully received at the central warehouse.",
+            reference_id=str(batch.id),
+            reference_type="product_batch"
+        )
+        self.db.add(notif_manu)
+
+        # THE FIX: 2. Broadcast to the Distribution Team so they know stock is available
+        self._notify_role(
+            RoleCode.DISTRIBUTION_TEAM,
+            "New Stock Available",
+            f"Batch {batch.batch_number} ({payload.quantity_received} units) has arrived at the central warehouse and is ready for distribution.",
+            str(batch.id),
+            "product_batch"
+        )
+
         self.db.commit()
         self.db.refresh(batch)
         return batch
-

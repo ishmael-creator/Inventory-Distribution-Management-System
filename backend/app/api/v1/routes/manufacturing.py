@@ -4,12 +4,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_permissions
-from app.core.enums import BatchStatus, LocationType, TransactionType
+# THE FIX: Added RoleCode to imports
+from app.core.enums import BatchStatus, LocationType, TransactionType, RoleCode
 from app.models.inventory import InventoryBalance, InventoryTransaction
 from app.db.session import get_db
 from app.models.product import ProductBatch
-from app.models.user import User
-# Added BatchReleaseRequest here
+# THE FIX: Added Role and Notification to imports
+from app.models.user import User, Role
+from app.models.notification import Notification
 from app.schemas.manufacturing import ProductBatchCreate, ProductBatchRead, BatchReleaseRequest
 from app.services.manufacturing_service import ManufacturingService
 
@@ -33,7 +35,6 @@ def create_batch(
 ) -> ProductBatch:
     return ManufacturingService(db).create_batch(payload, current_user.id)
 
-# Added payload: BatchReleaseRequest here
 @router.post("/batches/{batch_id}/release", response_model=ProductBatchRead)
 def release_batch(
     batch_id: uuid.UUID,
@@ -60,7 +61,7 @@ def receive_batch_at_warehouse(
     
     balance = db.query(InventoryBalance).filter(
         InventoryBalance.location_type == LocationType.WAREHOUSE,
-        InventoryBalance.location_id == batch.destination_id, # Safely routing to intended warehouse
+        InventoryBalance.location_id == batch.destination_id, 
         InventoryBalance.product_id == batch.product_id
     ).first()
     
@@ -87,5 +88,38 @@ def receive_batch_at_warehouse(
         created_by=current_user.id
     )
     db.add(tx)
+
+    # ==========================================
+    # THE FIX: FIRE NOTIFICATIONS BEFORE SAVING
+    # ==========================================
+    
+    # 1. Notify the Manufacturer
+    notif_manu = Notification(
+        id=uuid.uuid4(),
+        user_id=batch.manufacturer_id,
+        title="Batch Received at Warehouse",
+        message=f"Your batch {batch.batch_number} ({batch.quantity} units) has been successfully received at the central warehouse.",
+        reference_id=str(batch.id),
+        reference_type="product_batch"
+    )
+    db.add(notif_manu)
+
+    # 2. Notify all Distribution Team members
+    dist_users = db.scalars(
+        select(User).join(Role).where(Role.code == RoleCode.DISTRIBUTION_TEAM, User.is_active == True)
+    ).all()
+    
+    for dist_user in dist_users:
+        notif_dist = Notification(
+            id=uuid.uuid4(),
+            user_id=dist_user.id,
+            title="New Stock Available",
+            message=f"Batch {batch.batch_number} ({batch.quantity} units) has arrived at the central warehouse and is ready for distribution.",
+            reference_id=str(batch.id),
+            reference_type="product_batch"
+        )
+        db.add(notif_dist)
+    # ==========================================
+
     db.commit()
     return {"status": "success", "message": "Batch officially received into Warehouse!"}

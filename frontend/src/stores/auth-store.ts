@@ -13,7 +13,8 @@ function parseJwt(token: string) {
 type AuthState = {
   accessToken: string | null;
   userRole: string | null;
-  userId: string | null; // NEW: Track the specific user's ID
+  userId: string | null;
+  mustChangePassword: boolean; // THE FIX: Added to track password reset penalty box
   isOverrideEnabled: boolean;
   setAccessToken: (token: string | null) => void;
   setOverrideEnabled: (enabled: boolean) => void;
@@ -25,13 +26,15 @@ export const useAuthStore = create<AuthState>()(
       accessToken: null,
       userRole: null,
       userId: null,
+      mustChangePassword: false,
       isOverrideEnabled: false,
       setAccessToken: (token) => {
         const decoded = token ? parseJwt(token) : null;
         set({ 
           accessToken: token, 
           userRole: decoded?.role || null, 
-          userId: decoded?.sub || null, // 'sub' is the standard JWT field for User ID
+          userId: decoded?.sub || null,
+          mustChangePassword: decoded?.must_change_password || false, // THE FIX: Read flag from JWT
           isOverrideEnabled: false 
         });
       },

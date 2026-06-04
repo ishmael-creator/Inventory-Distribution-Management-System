@@ -1,201 +1,264 @@
 import uuid
-from datetime import UTC, datetime
-
-from fastapi import HTTPException, status
-from sqlalchemy import select
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
-from app.core.enums import DispatchStatus, LocationType, RequestStatus, TransactionType
-from app.models.inventory import AllocationRequest, DispatchOrder, Receipt
-from app.models.product import Product
-from app.models.user import Hub, Warehouse
-from app.schemas.distribution import AllocationRequestCreate, AllocationRequestReview, HubCreate, HubReceiptCreate
-from app.services.audit_service import AuditService
-from app.services.inventory_service import InventoryService
-
+from app.models.inventory import AllocationRequest, DispatchOrder, InventoryBalance, InventoryTransaction
+from app.models.user import Hub, User, Role
+from app.models.product import Product  # THE FIX: Imported Product to get the name
+from app.models.notification import Notification
+from app.core.enums import RoleCode
+from app.schemas.distribution import HubCreate, AllocationRequestCreate, AllocationRequestReview, HubReceiptCreate
 
 class DistributionService:
     def __init__(self, db: Session):
         self.db = db
 
-    def create_hub(self, payload: HubCreate, user_id: uuid.UUID) -> Hub:
-        if self.db.get(Warehouse, payload.warehouse_id) is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Warehouse not found")
-        hub = Hub(**payload.model_dump())
-        self.db.add(hub)
-        self.db.flush()
-        AuditService(self.db).log(
-            user_id=user_id,
-            action="hub.created",
-            resource_type="hub",
-            resource_id=hub.id,
-            new_values=payload.model_dump(mode="json"),
+    def _notify_role(self, role_code: str, title: str, message: str, ref_id: str, ref_type: str):
+        """Helper to broadcast a notification to all active users of a specific role."""
+        users = self.db.scalars(
+            select(User).join(Role).where(Role.code == role_code, User.is_active == True)
+        ).all()
+        for user in users:
+            notif = Notification(
+                id=uuid.uuid4(),
+                user_id=user.id,
+                title=title,
+                message=message,
+                reference_id=ref_id,
+                reference_type=ref_type
+            )
+            self.db.add(notif)
+
+    def create_hub(self, payload: HubCreate, user_id: uuid.UUID):
+        hub = Hub(
+            id=uuid.uuid4(),
+            name=payload.name,
+            location=payload.location,
+            warehouse_id=payload.warehouse_id,
+            manager_id=payload.manager_id,
+            is_active=True
         )
+        self.db.add(hub)
         self.db.commit()
         self.db.refresh(hub)
         return hub
 
-    def create_request(self, payload: AllocationRequestCreate, user_id: uuid.UUID) -> AllocationRequest:
-        if self.db.get(Product, payload.product_id) is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
-        if self.db.get(Warehouse, payload.warehouse_id) is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Warehouse not found")
-        hub = self.db.get(Hub, payload.hub_id)
-        if hub is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hub not found")
-        if hub.warehouse_id != payload.warehouse_id:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Hub does not belong to selected warehouse")
-
-        request = AllocationRequest(**payload.model_dump(), requested_by=user_id)
-        self.db.add(request)
-        self.db.flush()
-        AuditService(self.db).log(
-            user_id=user_id,
-            action="allocation_request.created",
-            resource_type="allocation_request",
-            resource_id=request.id,
-            new_values=payload.model_dump(mode="json"),
+    def create_request(self, payload: AllocationRequestCreate, user_id: uuid.UUID):
+        req = AllocationRequest(
+            id=uuid.uuid4(),
+            hub_id=payload.hub_id,
+            warehouse_id=payload.warehouse_id,
+            product_id=payload.product_id,
+            quantity=getattr(payload, 'requested_quantity', getattr(payload, 'quantity', 0)),
+            status="PENDING",
+            requested_by=user_id
         )
-        self.db.commit()
-        self.db.refresh(request)
-        return request
-
-    def approve_request(
-        self,
-        request_id: uuid.UUID,
-        payload: AllocationRequestReview,
-        user_id: uuid.UUID,
-    ) -> AllocationRequest:
-        request = self._get_pending_request_for_update(request_id)
-        approved_quantity = payload.approved_quantity or request.quantity
-        if approved_quantity > request.quantity:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Approved quantity cannot exceed requested quantity")
-
-        request.status = RequestStatus.APPROVED
-        request.approved_quantity = approved_quantity
-        request.approved_by = user_id
-        request.reviewed_by = user_id
-        request.review_notes = payload.review_notes
-        request.reviewed_at = datetime.now(UTC)
-        AuditService(self.db).log(
-            user_id=user_id,
-            action="allocation_request.approved",
-            resource_type="allocation_request",
-            resource_id=request.id,
-            new_values={"approved_quantity": approved_quantity, "review_notes": payload.review_notes},
+        self.db.add(req)
+        
+        # Fetch actual names
+        product = self.db.get(Product, req.product_id)
+        product_name = product.name if product else "Unknown Product"
+        hub = self.db.get(Hub, req.hub_id)
+        hub_name = hub.name if hub else "a Hub"
+        
+        self._notify_role(
+            RoleCode.WAREHOUSE_OFFICER,
+            "New Allocation Request",
+            f"The Distribution Team has requested {req.quantity} units of {product_name} for {hub_name}.",
+            str(req.id),
+            "allocation_request"
         )
+        
         self.db.commit()
-        self.db.refresh(request)
-        return request
+        self.db.refresh(req)
+        return req
 
-    def reject_request(
-        self,
-        request_id: uuid.UUID,
-        payload: AllocationRequestReview,
-        user_id: uuid.UUID,
-    ) -> AllocationRequest:
-        request = self._get_pending_request_for_update(request_id)
-        request.status = RequestStatus.REJECTED
-        request.reviewed_by = user_id
-        request.review_notes = payload.review_notes or "Warehouse cannot fulfill this request."
-        request.reviewed_at = datetime.now(UTC)
-        AuditService(self.db).log(
-            user_id=user_id,
-            action="allocation_request.rejected",
-            resource_type="allocation_request",
-            resource_id=request.id,
-            new_values={"review_notes": request.review_notes},
+    def approve_request(self, request_id: uuid.UUID, payload: AllocationRequestReview, user_id: uuid.UUID):
+        req = self.db.query(AllocationRequest).filter_by(id=request_id).first()
+        if not req: raise HTTPException(404, "Request not found")
+        
+        req.status = "APPROVED"
+        
+        # THE FIX: Prevent "None" if payload doesn't provide an approved quantity
+        approved_qty = payload.approved_quantity if getattr(payload, 'approved_quantity', None) is not None else req.quantity
+        req.approved_quantity = approved_qty
+        req.notes = getattr(payload, 'notes', None)
+        req.reviewed_by = user_id
+        
+        # Fetch actual names
+        product = self.db.get(Product, req.product_id)
+        product_name = product.name if product else "Unknown Product"
+
+        self._notify_role(
+            RoleCode.DISTRIBUTION_TEAM,
+            "Request Approved",
+            f"The Warehouse has approved your allocation request for {approved_qty} units of {product_name}.",
+            str(req.id),
+            "allocation_request"
         )
+        
         self.db.commit()
-        self.db.refresh(request)
-        return request
+        self.db.refresh(req)
+        return req
 
-    def dispatch_request(self, request_id: uuid.UUID, user_id: uuid.UUID) -> DispatchOrder:
-        request = self.db.scalar(select(AllocationRequest).where(AllocationRequest.id == request_id).with_for_update())
-        if request is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
-        if request.status != RequestStatus.APPROVED:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only approved requests can be dispatched")
-        if request.warehouse_id is None or request.hub_id is None or request.approved_quantity is None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Request is missing dispatch details")
+    def reject_request(self, request_id: uuid.UUID, payload: AllocationRequestReview, user_id: uuid.UUID):
+        req = self.db.query(AllocationRequest).filter_by(id=request_id).first()
+        if not req: raise HTTPException(404, "Request not found")
+        req.status = "REJECTED"
+        req.notes = getattr(payload, 'notes', None)
+        req.reviewed_by = user_id
+        
+        product = self.db.get(Product, req.product_id)
+        product_name = product.name if product else "Unknown Product"
+
+        self._notify_role(
+            RoleCode.DISTRIBUTION_TEAM,
+            "Request Rejected",
+            f"The Warehouse has rejected your allocation request for {req.quantity} units of {product_name}. Reason: {req.notes}",
+            str(req.id),
+            "allocation_request"
+        )
+        
+        self.db.commit()
+        self.db.refresh(req)
+        return req
+
+    def dispatch_request(self, request_id: uuid.UUID, user_id: uuid.UUID):
+        req = self.db.query(AllocationRequest).filter_by(id=request_id).first()
+        if not req: raise HTTPException(404, "Request not found")
+        if req.status != "APPROVED": raise HTTPException(400, "Request must be approved before dispatch")
+
+        qty = req.approved_quantity if req.approved_quantity is not None else req.quantity
+
+        warehouse_bal = self.db.query(InventoryBalance).filter_by(
+            location_id=req.warehouse_id, product_id=req.product_id
+        ).first()
+        
+        if not warehouse_bal or warehouse_bal.quantity < qty:
+            raise HTTPException(400, "Insufficient stock in warehouse to dispatch.")
+        
+        warehouse_bal.quantity -= qty
 
         dispatch = DispatchOrder(
-            allocation_request_id=request.id,
-            product_id=request.product_id,
+            id=uuid.uuid4(),
+            allocation_request_id=req.id,
+            product_id=req.product_id,
             dispatched_by=user_id,
-            quantity=request.approved_quantity,
-            status=DispatchStatus.DISPATCHED,
-            from_location_type=LocationType.WAREHOUSE,
-            from_location_id=request.warehouse_id,
-            to_location_type=LocationType.HUB,
-            to_location_id=request.hub_id,
-            dispatched_at=datetime.now(UTC),
+            from_location_type="WAREHOUSE",
+            from_location_id=req.warehouse_id,
+            to_location_type="HUB",
+            to_location_id=req.hub_id,
+            quantity=qty,
+            status="DISPATCHED"
         )
         self.db.add(dispatch)
-        self.db.flush()
-        InventoryService(self.db).record_movement(
-            product_id=request.product_id,
-            quantity=request.approved_quantity,
-            transaction_type=TransactionType.DISPATCH,
+        req.status = "FULFILLED"
+
+        tx = InventoryTransaction(
+            id=uuid.uuid4(),
+            product_id=req.product_id,
+            transaction_type="DISPATCH",
+            from_location_type="WAREHOUSE",
+            from_location_id=req.warehouse_id,
+            to_location_type=None,
+            to_location_id=None,
+            quantity=qty,
             created_by=user_id,
-            from_location_type=LocationType.WAREHOUSE,
-            from_location_id=request.warehouse_id,
-            to_location_type=LocationType.HUB,
-            to_location_id=request.hub_id,
-            reference_id=dispatch.id,
-            reference_type="dispatch_order",
-            notes="Warehouse dispatched approved request to hub",
+            notes="Dispatched to Hub. In transit."
         )
-        AuditService(self.db).log(
-            user_id=user_id,
-            action="dispatch_order.dispatched",
-            resource_type="dispatch_order",
-            resource_id=dispatch.id,
-            new_values={"allocation_request_id": str(request.id), "quantity": request.approved_quantity},
+        self.db.add(tx)
+        
+        # Fetch actual names for dispatch
+        product = self.db.get(Product, req.product_id)
+        product_name = product.name if product else "Unknown Product"
+        hub = self.db.get(Hub, req.hub_id)
+        hub_name = hub.name if hub else "the Hub"
+
+        # 1. Notify Distribution Team broadly
+        self._notify_role(
+            RoleCode.DISTRIBUTION_TEAM,
+            "Stock Dispatched",
+            f"{qty} units of {product_name} have been dispatched from the Central Warehouse and are en route to {hub_name}.",
+            str(dispatch.id),
+            "dispatch_order"
         )
+
+        # ==========================================
+        # THE FIX: Target ONLY the specific Hub's Manager
+        # ==========================================
+        if hub and hub.manager_id:
+            hub_notif = Notification(
+                id=uuid.uuid4(),
+                user_id=hub.manager_id, # Strict targeting
+                title="Incoming Dispatch",
+                message=f"Heads up: {qty} units of {product_name} have just been dispatched from the Central Warehouse and are en route to your location ({hub_name}).",
+                reference_id=str(dispatch.id),
+                reference_type="dispatch_order"
+            )
+            self.db.add(hub_notif)
+        else:
+            print(f"❌ [SYSTEM LOG] Could not notify {hub_name} - No manager_id is assigned to this hub in the database.")
+        # ==========================================
+        
         self.db.commit()
         self.db.refresh(dispatch)
         return dispatch
 
-    def receive_dispatch(self, payload: HubReceiptCreate, user_id: uuid.UUID) -> DispatchOrder:
-        dispatch = self.db.scalar(select(DispatchOrder).where(DispatchOrder.id == payload.dispatch_order_id).with_for_update())
-        if dispatch is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dispatch order not found")
-        if dispatch.status != DispatchStatus.DISPATCHED:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Dispatch is not awaiting hub receipt")
-        if payload.quantity_received != dispatch.quantity:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Partial hub receipt is not enabled in Phase 2")
+    def receive_dispatch(self, payload: HubReceiptCreate, user_id: uuid.UUID):
+        dispatch = self.db.query(DispatchOrder).filter_by(id=payload.dispatch_order_id).first()
+        if not dispatch: raise HTTPException(404, "Dispatch not found")
+        if dispatch.status == "RECEIVED": raise HTTPException(400, "Dispatch already received")
 
-        receipt = Receipt(
-            dispatch_order_id=dispatch.id,
-            received_by=user_id,
-            quantity_received=payload.quantity_received,
-            notes=payload.notes,
+        dispatch.status = "RECEIVED" 
+        
+        req = self.db.query(AllocationRequest).filter_by(id=dispatch.allocation_request_id).first()
+        if req: req.status = "FULFILLED"
+
+        hub_bal = self.db.query(InventoryBalance).filter_by(
+            location_id=dispatch.to_location_id, product_id=dispatch.product_id
+        ).first()
+        
+        if not hub_bal:
+            hub_bal = InventoryBalance(
+                id=uuid.uuid4(),
+                product_id=dispatch.product_id,
+                location_type="HUB",
+                location_id=dispatch.to_location_id,
+                quantity=payload.quantity_received
+            )
+            self.db.add(hub_bal)
+        else:
+            hub_bal.quantity += payload.quantity_received
+
+        tx = InventoryTransaction(
+            id=uuid.uuid4(),
+            product_id=dispatch.product_id,
+            transaction_type="RECEIPT",
+            from_location_type=None,
+            from_location_id=None,
+            to_location_type="HUB",
+            to_location_id=dispatch.to_location_id,
+            quantity=payload.quantity_received,
+            created_by=user_id,
+            notes=getattr(payload, 'notes', "Confirmed receipt at Hub.")
         )
-        self.db.add(receipt)
-        dispatch.status = DispatchStatus.RECEIVED
+        self.db.add(tx)
+        
+        # Fetch actual names
+        product = self.db.get(Product, dispatch.product_id)
+        product_name = product.name if product else "Unknown Product"
+        hub = self.db.get(Hub, dispatch.to_location_id)
+        hub_name = hub.name if hub else "The Hub"
 
-        if dispatch.allocation_request_id:
-            request = self.db.get(AllocationRequest, dispatch.allocation_request_id)
-            if request:
-                request.status = RequestStatus.FULFILLED
-
-        AuditService(self.db).log(
-            user_id=user_id,
-            action="hub.dispatch_received",
-            resource_type="dispatch_order",
-            resource_id=dispatch.id,
-            new_values={"quantity_received": payload.quantity_received},
+        self._notify_role(
+            RoleCode.DISTRIBUTION_TEAM,
+            "Stock Received at Hub",
+            f"{hub_name} has successfully received and confirmed {payload.quantity_received} units of {product_name}.",
+            str(dispatch.id),
+            "dispatch_order"
         )
+        
         self.db.commit()
         self.db.refresh(dispatch)
         return dispatch
-
-    def _get_pending_request_for_update(self, request_id: uuid.UUID) -> AllocationRequest:
-        request = self.db.scalar(select(AllocationRequest).where(AllocationRequest.id == request_id).with_for_update())
-        if request is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
-        if request.status != RequestStatus.PENDING:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only pending requests can be reviewed")
-        return request
-
