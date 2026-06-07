@@ -1,15 +1,27 @@
 import os
-import smtplib
+import json
 import logging
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import urllib.request
 
 logger = logging.getLogger(__name__)
 
 def send_welcome_email(email: str, full_name: str, temporary_password: str):
-    subject = "Welcome to UpEnergy - Your Account Details"
+    # Pull credentials from the .env file (now looking for Brevo Key)
+    api_key = os.getenv("BREVO_API_KEY")
+    sender_email = os.getenv("SMTP_FROM_EMAIL", "ishmael@upenergygroup.com")
     
-    # We use HTML so the email looks professional
+    # Fallback safety net: If .env variables are missing, print to terminal
+    if not api_key:
+        logger.warning("BREVO_API_KEY missing. Falling back to terminal output.")
+        print("\n" + "="*50)
+        print(f"📧 [MOCK EMAIL] DISPATCHED TO: {email}")
+        print(f"PASSWORD: {temporary_password}")
+        print("="*50 + "\n")
+        return
+
+    url = "https://api.brevo.com/v3/smtp/email"
+    
+    # Your original HTML formatting kept perfectly intact
     html_body = f"""
     <html>
         <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
@@ -29,41 +41,32 @@ def send_welcome_email(email: str, full_name: str, temporary_password: str):
     </html>
     """
     
-    # Pull credentials from the .env file
-    smtp_host = os.getenv("SMTP_HOST")
-    smtp_port = os.getenv("SMTP_PORT", 587)
-    smtp_user = os.getenv("SMTP_USER")
-    smtp_pass = os.getenv("SMTP_PASSWORD")
-    from_email = os.getenv("SMTP_FROM_EMAIL")
-
-    # Fallback safety net: If .env variables are missing, print to terminal
-    if not all([smtp_host, smtp_user, smtp_pass]):
-        logger.warning("SMTP credentials missing. Falling back to terminal output.")
-        print("\n" + "="*50)
-        print(f"📧 [MOCK EMAIL] DISPATCHED TO: {email}")
-        print(f"PASSWORD: {temporary_password}")
-        print("="*50 + "\n")
-        return
-
-    # Construct the actual email payload
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = f"UpEnergy System <{from_email}>"
-    msg["To"] = email
-
-    msg.attach(MIMEText(html_body, "html"))
-
+    # The payload formatted exactly how Brevo's API expects it
+    data = {
+        "sender": {"name": "UpEnergy System", "email": sender_email},
+        "to": [{"email": email, "name": full_name}],
+        "subject": "Welcome to UpEnergy - Your Account Details",
+        "htmlContent": html_body
+    }
+    
+    # Package the request as a secure HTTPS POST
+    req = urllib.request.Request(
+        url, 
+        data=json.dumps(data).encode("utf-8"), 
+        headers={
+            "accept": "application/json",
+            "api-key": api_key,
+            "content-type": "application/json"
+        }
+    )
+    
     try:
-        # Connect to the server and dispatch via TLS
-        with smtplib.SMTP(smtp_host, int(smtp_port)) as server:
-            server.starttls()  # Secure the connection for Gmail
-            server.login(smtp_user, smtp_pass)
-            server.sendmail(from_email, email, msg.as_string())
+        # Fire the request
+        with urllib.request.urlopen(req) as response:
+            logger.info(f"Welcome email successfully sent to {email} via Brevo API")
             
-        logger.info(f"Welcome email successfully sent to {email}")
-        
     except Exception as e:
-        logger.error(f"Failed to send email to {email}: {str(e)}")
-        # Ultimate fallback: if the SMTP connection fails, print the password so you don't lose it
+        logger.error(f"Failed to send API email to {email}: {str(e)}")
+        # Ultimate fallback: if the API connection fails, print the password so you don't lose it
         print(f"\n❌ ALERT: Email failed to send to {email}. Error: {e}")
         print(f"Temporary password was: {temporary_password}\n")
