@@ -2,7 +2,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
+from app.utils.push_notifier import create_system_notification
 from app.api.deps import get_current_user, require_permissions
 # THE FIX: Added RoleCode to imports
 from app.core.enums import BatchStatus, LocationType, TransactionType, RoleCode
@@ -89,37 +89,37 @@ def receive_batch_at_warehouse(
     )
     db.add(tx)
 
-    # ==========================================
-    # THE FIX: FIRE NOTIFICATIONS BEFORE SAVING
-    # ==========================================
+    # =======================================================
+    # THE FIX: FIRE NOTIFICATIONS & OS PUSH ALERTS VIA ENGINE
+    # =======================================================
     
-    # 1. Notify the Manufacturer
-    notif_manu = Notification(
-        id=uuid.uuid4(),
+    # 1. Notify the Manufacturer and drop them into their dashboard on click
+    create_system_notification(
+        db=db,
         user_id=batch.manufacturer_id,
         title="Batch Received at Warehouse",
         message=f"Your batch {batch.batch_number} ({batch.quantity} units) has been successfully received at the central warehouse.",
         reference_id=str(batch.id),
-        reference_type="product_batch"
+        reference_type="product_batch",
+        url="/manufacturing"
     )
-    db.add(notif_manu)
 
-    # 2. Notify all Distribution Team members
+    # 2. Notify all active Distribution Team members and drop them into allocations on click
     dist_users = db.scalars(
         select(User).join(Role).where(Role.code == RoleCode.DISTRIBUTION_TEAM, User.is_active == True)
     ).all()
     
     for dist_user in dist_users:
-        notif_dist = Notification(
-            id=uuid.uuid4(),
+        create_system_notification(
+            db=db,
             user_id=dist_user.id,
             title="New Stock Available",
             message=f"Batch {batch.batch_number} ({batch.quantity} units) has arrived at the central warehouse and is ready for distribution.",
             reference_id=str(batch.id),
-            reference_type="product_batch"
+            reference_type="product_batch",
+            url="/distribution"
         )
-        db.add(notif_dist)
-    # ==========================================
+    # =======================================================
 
     db.commit()
     return {"status": "success", "message": "Batch officially received into Warehouse!"}

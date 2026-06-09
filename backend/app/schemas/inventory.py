@@ -1,9 +1,11 @@
 import uuid
 from datetime import datetime
-
 from pydantic import BaseModel
-
 from app.core.enums import LocationType, TransactionType
+from typing import Optional
+
+class HubUpdate(BaseModel):
+    manager_id: Optional[uuid.UUID] = None
 
 
 class InventoryBalanceRead(BaseModel):

@@ -2,16 +2,18 @@ from pydantic import BaseModel, Field
 from http.client import HTTPException
 import uuid
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import Session
 from fastapi import status
 
 from app.api.deps import get_current_user, require_permissions
-from app.core.enums import LocationType, TransactionType
+from app.core.enums import LocationType, TransactionType, RoleCode
 from app.db.session import get_db
-from app.models.inventory import InventoryBalance, InventoryTransaction
+from app.models.inventory import InventoryBalance, InventoryTransaction, Receipt, DispatchOrder, AllocationRequest, StockMovement
 from app.models.user import User, Agent
 from app.schemas.inventory import InventoryBalanceRead, InventoryTransactionRead
+from app.models.product import ProductBatch
+from app.models.notification import Notification
 # Make sure you have your dependencies imported (Session, get_db, get_current_user, etc.)
 
 router = APIRouter()
@@ -126,3 +128,30 @@ def record_agent_sale(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@router.post("/factory-reset")
+def factory_reset_system(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Security: Hard-lock this route exclusively to Super Admins
+    if current_user.role.code != RoleCode.SUPER_ADMIN:
+        raise HTTPException(status_code=403, detail="Only Super Admin can reset the system.")
+    
+    try:
+        # Delete in strict reverse-dependency order to satisfy Postgres constraints
+        db.execute(delete(Receipt))
+        db.execute(delete(DispatchOrder))
+        db.execute(delete(AllocationRequest))
+        db.execute(delete(StockMovement))
+        db.execute(delete(InventoryTransaction))
+        db.execute(delete(InventoryBalance))
+        db.execute(delete(ProductBatch))
+        db.execute(delete(Notification)) 
+        
+        db.commit()
+        return {"status": "success", "message": "All operational numbers reset to zero."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error during reset: {str(e)}")

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { LockKeyhole, LogIn } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth-store";
+import { subscribeToPushNotifications } from '@/utils/pushHelper'; // Adjust the path based on where you saved it
 
 export default function LoginPage() {
   const router = useRouter();
@@ -27,6 +28,7 @@ export default function LoginPage() {
       });
 
       setAccessToken(response.data.access_token);
+      subscribeToPushNotifications(response.data.access_token);
       router.push("/");
     } catch (requestError: any) {
       setError(

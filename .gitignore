@@ -56,3 +56,7 @@ pip-delete-this-directory.txt
 *.swp
 *.swo
 .vercel
+
+
+export_project.py
+Project_Codebase_Summary.docx

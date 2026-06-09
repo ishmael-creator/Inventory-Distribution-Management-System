@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Store, UserCheck, CheckCircle, Boxes, ShieldAlert, Wrench, ChevronDown, ChevronUp } from "lucide-react";
+import { Store, UserCheck, CheckCircle, Boxes, ShieldAlert, Wrench, ChevronDown, ChevronUp, UserPlus, X } from "lucide-react";
 
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionButton } from "@/components/ui/action-button";
@@ -25,12 +25,24 @@ export default function HubsPage() {
   const [isComplaintFormOpen, setIsComplaintFormOpen] = useState(false);
   const [complaintForm, setComplaintForm] = useState({ product_id: "", agent_name: "", complaint_type: "REPLACEMENT", quantity: "1", notes: "" });
 
+  // Manager Assignment State
+  const [isManagerModalOpen, setIsManagerModalOpen] = useState(false);
+  const [selectedManagerId, setSelectedManagerId] = useState("");
+
   const [error, setError] = useState<string | null>(null);
 
+  // Queries
   const products = useQuery({ queryKey: ["products"], queryFn: async () => (await api.get<ProductPage>("/products")).data });
   const hubs = useQuery({ queryKey: ["hubs"], queryFn: async () => (await api.get<HubRecord[]>("/distribution/hubs")).data });
   const dispatches = useQuery({ queryKey: ["dispatches"], queryFn: async () => (await api.get<DispatchOrder[]>("/distribution/dispatches")).data });
   const balances = useQuery({ queryKey: ["balances"], queryFn: async () => (await api.get<InventoryBalance[]>("/inventory/balances")).data });
+  
+  // NEW: Fetch all users so we can populate the dropdown
+  const users = useQuery({ 
+    queryKey: ["users"], 
+    queryFn: async () => (await api.get<any[]>("/users")).data,
+    enabled: userRole !== "HUB_OFFICER" // Only fetch if admin
+  });
 
   const productNameById = useMemo(() => new Map((products.data?.items ?? []).map((item) => [item.id, item.name])), [products.data?.items]);
 
@@ -52,6 +64,7 @@ export default function HubsPage() {
     );
   }, [balances.data, activeHubId]);
 
+  // Mutations
   const receiveDispatch = useMutation({
     mutationFn: async (dispatch: DispatchOrder) => api.post<DispatchOrder>("/distribution/receipts", {
       dispatch_order_id: dispatch.id,
@@ -82,7 +95,6 @@ export default function HubsPage() {
     onError: (err: any) => setError(err.response?.data?.detail || "Failed to assign stock to agent."),
   });
 
-  // Complaint Mutation
   const logComplaint = useMutation({
     mutationFn: async () => api.post(`/hubs/${activeHubId}/complaints`, {
       product_id: complaintForm.product_id,
@@ -101,7 +113,6 @@ export default function HubsPage() {
     onError: (err: any) => setError(err.response?.data?.detail || "Failed to process complaint."),
   });
 
-  // Repair Mutation
   const markRepaired = useMutation({
     mutationFn: async ({ product_id, quantity }: { product_id: string, quantity: number }) => 
       api.post(`/hubs/${activeHubId}/repairs`, { product_id, quantity }),
@@ -112,10 +123,25 @@ export default function HubsPage() {
     onError: (err: any) => setError(err.response?.data?.detail || "Failed to mark as repaired."),
   });
 
+  // NEW: Assign Manager Mutation
+  const assignManager = useMutation({
+    mutationFn: async () => api.patch(`/distribution/hubs/${activeHubId}`, {
+      manager_id: selectedManagerId
+    }),
+    onSuccess: async () => {
+      setIsManagerModalOpen(false);
+      setSelectedManagerId("");
+      setError(null);
+      await queryClient.invalidateQueries({ queryKey: ["hubs"] });
+      alert("Manager successfully assigned!");
+    },
+    onError: (err: any) => setError(err.response?.data?.detail || "Failed to assign manager."),
+  });
+
   return (
     <AppShell title="Hub Operations" description="Manage receipts, field agents, customer complaints, and damaged goods.">
       
-      {/* HUB FILTER TABS (HIDDEN FOR HUB OFFICERS TO PREVENT SNOOPING) */}
+      {/* HUB FILTER TABS & ASSIGN MANAGER BUTTON */}
       {userRole === "HUB_OFFICER" ? (
         <div className="mb-6 border-b border-line pb-4">
           <h2 className="text-xl font-bold text-ink flex items-center gap-2">
@@ -124,22 +150,36 @@ export default function HubsPage() {
           </h2>
         </div>
       ) : (
-        <div className="mb-6 flex flex-wrap gap-2 border-b border-line pb-4">
-          {(hubs.data ?? []).map((hub: any) => (
-            <button
-              key={hub.id}
-              onClick={() => setActiveHubId(hub.id)}
-              className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${
-                activeHubId === hub.id
-                  ? "bg-brand text-white shadow-sm"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-              }`}
+        <div className="mb-6 flex flex-wrap items-center justify-between border-b border-line pb-4">
+          <div className="flex flex-wrap gap-2">
+            {(hubs.data ?? []).map((hub: any) => (
+              <button
+                key={hub.id}
+                onClick={() => setActiveHubId(hub.id)}
+                className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${
+                  activeHubId === hub.id
+                    ? "bg-brand text-white shadow-sm"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                {hub.name}
+              </button>
+            ))}
+            {hubs.data?.length === 0 && (
+              <span className="text-xs text-slate-400">No hubs registered in system</span>
+            )}
+          </div>
+
+          {/* ADMIN ONLY: Assign Manager Button */}
+          {activeHubId && (
+            <ActionButton 
+              variant="secondary" 
+              className="ml-auto"
+              onClick={() => setIsManagerModalOpen(true)}
             >
-              {hub.name}
-            </button>
-          ))}
-          {hubs.data?.length === 0 && (
-            <span className="text-xs text-slate-400">No hubs registered in system</span>
+              <UserPlus className="mr-2 h-4 w-4" />
+              Assign Manager
+            </ActionButton>
           )}
         </div>
       )}
@@ -174,6 +214,7 @@ export default function HubsPage() {
                   </SelectField>
                   <SelectField label="Returned Product" value={complaintForm.product_id} onChange={(e) => setComplaintForm({ ...complaintForm, product_id: e.target.value })} required>
                     <option value="">Select product</option>
+                    <option value="">Select Product</option>
                     {(products.data?.items ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </SelectField>
                   <TextField label="Associated Agent" value={complaintForm.agent_name} onChange={(e) => setComplaintForm({ ...complaintForm, agent_name: e.target.value })} required />
@@ -193,6 +234,7 @@ export default function HubsPage() {
         </div>
       </section>
 
+      {/* REST OF YOUR UI REMAINS IDENTICAL... */}
       <div className="grid gap-6 xl:grid-cols-2">
         <section className="rounded-md border border-line bg-white h-fit shadow-sm">
           <div className="flex items-center gap-2 border-b border-line bg-blue-50/50 px-4 py-3">
@@ -270,7 +312,7 @@ export default function HubsPage() {
             <tbody className="divide-y divide-line">
               {(products.data?.items ?? []).map((product) => {
                 const bal = currentInventory.find(b => b.product_id === product.id);
-                const damaged = 0;
+                const damaged = 0; // Update when you have damaged stock state
                 const reserved = bal?.reserved_quantity || 0; 
                 const total = bal?.quantity || 0;
                 const sellable = total - reserved - damaged;
@@ -314,6 +356,51 @@ export default function HubsPage() {
           </table>
         </div>
       </section>
+
+      {/* NEW: ASSIGN MANAGER MODAL OVERLAY */}
+      {isManagerModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-ink">Assign Hub Manager</h3>
+              <button onClick={() => setIsManagerModalOpen(false)} className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="mb-4 text-sm text-slate-600">
+              Select a user to manage the <strong>{hubs.data?.find(h => h.id === activeHubId)?.name}</strong> Hub. They will receive all dispatch notifications for this location.
+            </p>
+            
+            <form onSubmit={(e) => { e.preventDefault(); assignManager.mutate(); }}>
+              <div className="mb-6">
+                <SelectField 
+                  label="Select User" 
+                  value={selectedManagerId} 
+                  onChange={(e) => setSelectedManagerId(e.target.value)} 
+                  required
+                >
+                  <option value="">-- Choose a Manager --</option>
+                  {(users.data ?? [])
+                    .filter((u: any) => u.is_active) // Optional: only show active users
+                    .map((user: any) => (
+                    <option key={user.id} value={user.id}>
+                      {user.full_name} ({user.role.name})
+                    </option>
+                  ))}
+                </SelectField>
+              </div>
+              <div className="flex justify-end gap-3">
+                <ActionButton type="button" variant="secondary" onClick={() => setIsManagerModalOpen(false)}>
+                  Cancel
+                </ActionButton>
+                <ActionButton type="submit" disabled={assignManager.isPending || !selectedManagerId}>
+                  {assignManager.isPending ? "Assigning..." : "Save Manager"}
+                </ActionButton>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </AppShell>
   );

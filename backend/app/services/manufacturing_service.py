@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
+from app.utils.push_notifier import create_system_notification
 # THE FIX: Added RoleCode to imports
 from app.core.enums import BatchStatus, LocationType, TransactionType, RoleCode
 from app.models.product import Product, ProductBatch
@@ -107,15 +107,15 @@ class ManufacturingService:
         ).all()
 
         for officer in warehouse_officers:
-            notification = Notification(
-                id=uuid.uuid4(),
+            create_system_notification(
+                db=self.db,
                 user_id=officer.id,
                 title="Incoming Stock Delivery",
                 message=f"Batch {batch.batch_number} ({batch.quantity} units) has been released by the manufacturer and is en route to {warehouse.name}.",
                 reference_id=str(batch.id),
-                reference_type="product_batch"
+                reference_type="product_batch",
+                url="/warehouse"
             )
-            self.db.add(notification)
 
         self.db.commit()
         self.db.refresh(batch)

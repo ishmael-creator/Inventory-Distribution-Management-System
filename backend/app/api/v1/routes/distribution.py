@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,7 @@ from app.schemas.distribution import (
     HubCreate,
     HubRead,
     HubReceiptCreate,
+    HubUpdate, # <-- Added this import! (Make sure you put the schema in this file)
 )
 from app.services.distribution_service import DistributionService
 
@@ -105,3 +106,38 @@ def receive_dispatch(
     db: Session = Depends(get_db),
 ) -> DispatchOrder:
     return DistributionService(db).receive_dispatch(payload, current_user.id)
+
+@router.patch("/hubs/{hub_id}")
+def assign_hub_manager(
+    hub_id: uuid.UUID,
+    hub_data: HubUpdate, 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Assign a manager to a specific hub. Only accessible by Admins/Super Admins.
+    """
+    # 1. Security Check: Only let Super Admins or Admins do this
+    if current_user.role.code not in ["SUPER_ADMIN", "ADMIN"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Not authorized to assign hub managers"
+        )
+
+    # 2. Find the Hub
+    hub = db.query(Hub).filter(Hub.id == hub_id).first()
+    if not hub:
+        raise HTTPException(status_code=404, detail="Hub not found")
+
+    # 3. Verify the new manager exists
+    if hub_data.manager_id:
+        manager = db.query(User).filter(User.id == hub_data.manager_id).first()
+        if not manager:
+            raise HTTPException(status_code=404, detail="Selected manager user not found")
+
+    # 4. Update and Save
+    hub.manager_id = hub_data.manager_id
+    db.commit()
+    db.refresh(hub)
+
+    return hub

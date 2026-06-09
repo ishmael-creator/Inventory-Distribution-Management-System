@@ -6,11 +6,12 @@ import uuid
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
-
+from app.schemas.notifications import PushSubscriptionCreate
 from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.models.user import User
+from app.models.user import PushSubscription, User
 from app.models.notification import Notification
+from app.schemas.notifications import PushSubscriptionCreate
 
 router = APIRouter()
 
@@ -65,3 +66,34 @@ def mark_all_as_read(
     )
     db.commit()
     return {"message": "All notifications marked as read"}
+
+
+@router.post("/push-subscribe", status_code=status.HTTP_200_OK)
+def save_push_subscription(
+    payload: PushSubscriptionCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Check if this exact browser endpoint is already registered
+    existing_sub = db.query(PushSubscription).filter(
+        PushSubscription.endpoint == payload.endpoint
+    ).first()
+
+    if existing_sub:
+        # If it exists, update it to the current user and refresh keys
+        existing_sub.user_id = current_user.id
+        existing_sub.p256dh = payload.keys.p256dh
+        existing_sub.auth = payload.keys.auth
+    else:
+        # Otherwise, create a brand new device registration
+        new_sub = PushSubscription(
+            id=uuid.uuid4(),
+            user_id=current_user.id,
+            endpoint=payload.endpoint,
+            p256dh=payload.keys.p256dh,
+            auth=payload.keys.auth
+        )
+        db.add(new_sub)
+
+    db.commit()
+    return {"status": "success", "message": "Device successfully registered for push notifications"}

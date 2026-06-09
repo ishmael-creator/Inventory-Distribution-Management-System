@@ -5,7 +5,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 from app.core.security import create_access_token, verify_password, hash_password
-from app.models.user import User, Role
+from app.models.user import User, Role, Hub
 from app.core.enums import RoleCode
 from app.utils.email import send_welcome_email
 
@@ -55,6 +55,17 @@ class AuthService:
             must_change_password=True # Flag for forced reset
         )
         self.db.add(new_user)
+        
+        # 🔥 THE FIX: Tell Postgres to temporarily save the user so they officially "exist"
+        self.db.flush()
+        
+        # 🔥 THE NEW AUTOMATION 🔥
+        # If they are a Hub Officer and assigned to a Hub, make them the Manager instantly!
+        if hub_id and role_code == "HUB_OFFICER":
+            hub = self.db.get(Hub, hub_id)
+            if hub:
+                hub.manager_id = new_user.id
+
         self.db.commit()
         self.db.refresh(new_user)
 

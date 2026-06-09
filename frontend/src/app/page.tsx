@@ -1,20 +1,21 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/app-shell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth-store";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
 } from "recharts";
-import { Package, ArrowRightLeft, MapPin, Calendar, Factory } from "lucide-react";
+import { Package, ArrowRightLeft, MapPin, Calendar, Factory, Trash2 } from "lucide-react";
 import type { InventoryBalance, InventoryTransaction, ProductPage } from "@/types/inventory";
 
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
 
 export default function DashboardPage() {
   const userRole = useAuthStore((state) => state.userRole);
+  const isOverrideEnabled = useAuthStore((state) => state.isOverrideEnabled);
 
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
@@ -38,16 +39,28 @@ export default function DashboardPage() {
     queryFn: async () => (await api.get<InventoryTransaction[]>("/inventory/transactions")).data,
   });
 
+  const queryClient = useQueryClient();
+
+  const factoryReset = useMutation({
+    mutationFn: async () => api.post("/inventory/factory-reset"),
+    onSuccess: async () => {
+      alert("System operations have been completely reset to zero.");
+      await queryClient.invalidateQueries(); 
+      window.location.reload(); // Hard refresh to wipe the slate clean visually
+    },
+    onError: (err: any) => alert(err.response?.data?.detail || "Reset failed")
+  });
+
   const productNameById = useMemo(() => new Map((products.data?.items ?? []).map((p) => [p.id, p.name])), [products.data?.items]);
 
-  // THE FIX: Strict Dashboard Blinders for Stock Labels
+  // Strict Dashboard Blinders for Stock Labels
   const stockLabel = (userRole === "SUPER_ADMIN" || userRole === "MANAGER") ? "Global Active Stock" 
                    : userRole === "MANUFACTURER" ? "Current Factory Stock"
                    : userRole === "WAREHOUSE_OFFICER" ? "Current Warehouse Stock"
                    : userRole === "HUB_OFFICER" ? "Current Hub Stock"
                    : "Total Accessible Stock";
 
-  // THE FIX: Strict Dashboard Blinders for Stock Data
+  // Strict Dashboard Blinders for Stock Data
   const stockDistribution = useMemo(() => {
     let data = balances.data ?? [];
     
@@ -70,7 +83,7 @@ export default function DashboardPage() {
     return Object.entries(grouped).map(([name, value]) => ({ name, value }));
   }, [balances.data, userRole]);
 
-  // THE FIX: Strict Dashboard Blinders for Transactions
+  // Strict Dashboard Blinders for Transactions
   const filteredTransactions = useMemo(() => {
     let data = transactions.data ?? [];
 
@@ -179,7 +192,7 @@ export default function DashboardPage() {
         <section className="rounded-md border border-line bg-white p-4 shadow-sm h-96 flex flex-col">
           <h2 className="text-sm font-semibold text-ink mb-4">Stock Distribution in Scope</h2>
           <div className="flex-1 w-full min-h-0">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minHeight={300}>
               <PieChart>
                 <Pie data={stockDistribution} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={5} dataKey="value">
                   {stockDistribution.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
@@ -194,7 +207,7 @@ export default function DashboardPage() {
         <section className="rounded-md border border-line bg-white p-4 shadow-sm h-96 flex flex-col">
           <h2 className="text-sm font-semibold text-ink mb-4">Transaction Volume by Type</h2>
           <div className="flex-1 w-full min-h-0">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minHeight={300}>
               <BarChart data={activityData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} />
@@ -206,6 +219,35 @@ export default function DashboardPage() {
           </div>
         </section>
       </div>
+
+      {/* 🔴 SUPER ADMIN DANGER ZONE 🔴 */}
+      {userRole === "SUPER_ADMIN" && isOverrideEnabled && (
+        <section className="mt-12 rounded-md border border-red-200 bg-red-50 p-6 shadow-sm">
+          <h2 className="text-lg font-bold text-red-900 mb-2">System Danger Zone</h2>
+          <p className="text-sm text-red-700 mb-4">
+            This will permanently erase all inventory balances, production batches, allocation requests, dispatches, and transactions. <strong>User accounts, roles, products, and hub access will remain fully intact.</strong> This cannot be undone.
+          </p>
+          <button
+            onClick={() => {
+              const confirm1 = window.confirm("WARNING: Are you absolutely sure you want to wipe all operational data?");
+              if (confirm1) {
+                const confirm2 = window.prompt("Type 'RESET' to confirm this action:");
+                if (confirm2 === 'RESET') {
+                  factoryReset.mutate();
+                } else if (confirm2 !== null) {
+                  alert("Typo detected. Reset cancelled.");
+                }
+              }
+            }}
+            disabled={factoryReset.isPending}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-red-600 px-4 text-sm font-semibold text-white transition-all hover:bg-red-700 disabled:opacity-50"
+          >
+            <Trash2 className="h-4 w-4" />
+            {factoryReset.isPending ? "Wiping Data..." : "Factory Reset Operational Data"}
+          </button>
+        </section>
+      )}
+
     </AppShell>
   );
 }

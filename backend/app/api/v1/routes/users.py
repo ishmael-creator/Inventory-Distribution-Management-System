@@ -67,17 +67,24 @@ def toggle_user_access(user_id: uuid.UUID, _: User = Depends(require_permissions
     return user
 
 @router.delete("/{user_id}")
-def delete_user(user_id: uuid.UUID, _: User = Depends(require_permissions("users.write")), db: Session = Depends(get_db)):
-    user = db.get(User, user_id)
+def delete_user(
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permissions("users.write"))
+):
+    user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found.")
+        raise HTTPException(status_code=404, detail="User not found")
         
-    if user.role.code == "SUPER_ADMIN" and user.email == "ishmael@upenergygroup.com":
-        raise HTTPException(status_code=400, detail="Cannot delete the master admin account.")
-        
-    db.delete(user)
+    # Prevent deleting yourself
+    if user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+
+    # The Fix: Soft Delete instead of Hard Delete
+    user.is_active = False 
     db.commit()
-    return {"status": "success", "message": "User permanently deleted."}
+    
+    return {"message": "User successfully deactivated"}
 
 @router.post("/{user_id}/reset-password")
 def reset_password(user_id: uuid.UUID, payload: PasswordResetPayload, _: User = Depends(require_permissions("users.write")), db: Session = Depends(get_db)):
