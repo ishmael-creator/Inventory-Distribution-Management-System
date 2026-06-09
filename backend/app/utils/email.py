@@ -28,7 +28,7 @@ def send_welcome_email(email: str, full_name: str, temporary_password: str):
             <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
                 <h2 style="color: #0f172a;">Welcome to UpEnergy Operations</h2>
                 <p>Hello <strong>{full_name}</strong>,</p>
-                <p>An administrative account has been provisioned for you on the UpEnergy Inventory System.</p>
+                <p>An administrative account has been provisioned for you on the UpEnergy Inventory System (https://inventory-distribution-management-s.vercel.app).</p>
                 <div style="background-color: #f8fafc; padding: 15px; border-radius: 6px; margin: 20px 0;">
                     <p style="margin: 0;"><strong>Login Email:</strong> {email}</p>
                     <p style="margin: 10px 0 0 0;"><strong>Temporary Password:</strong> <span style="font-family: monospace; font-size: 16px; background: #e2e8f0; padding: 2px 6px; border-radius: 4px;">{temporary_password}</span></p>
