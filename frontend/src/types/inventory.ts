@@ -98,8 +98,13 @@ export type InventoryTransaction = {
   transaction_type: string;
   quantity: number;
   from_location_type: string | null;
+  from_location_id: string | null;
   to_location_type: string | null;
+  to_location_id: string | null;
+  reference_id: string | null;
   reference_type: string | null;
+  notes: string | null;
+  created_by: string;
   created_at: string;
 };
 
