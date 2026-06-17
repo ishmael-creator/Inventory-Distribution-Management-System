@@ -1,9 +1,8 @@
 "use client";
 
-import { FormEvent, useMemo, useState, Fragment } from "react";
+import { useMemo, useState, Fragment } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ClipboardCheck, Boxes, Settings2, ChevronDown, ChevronUp, Store, UserCheck } from "lucide-react";
-
+import { ClipboardCheck, Boxes, Settings2, ChevronDown, ChevronUp, Store } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionButton } from "@/components/ui/action-button";
 import { SelectField, TextField } from "@/components/ui/form-field";
@@ -16,7 +15,7 @@ const DEMO_HUBS = ["Ablekuma", "Konongo", "Manpong", "Offinso", "Adukrom", "Kofo
 function requestTone(status: AllocationRequest["status"]) {
   if (status === "FULFILLED") return "success";
   if (status === "APPROVED" || status === "PENDING") return "warning";
-  if (status === "REJECTED") return "neutral"; 
+  if (status === "REJECTED") return "neutral";
   return "neutral";
 }
 
@@ -31,105 +30,61 @@ function requestLabel(request: AllocationRequest, dispatch?: DispatchOrder) {
 
 export default function DistributionPage() {
   const queryClient = useQueryClient();
-
   const [showAdminTools, setShowAdminTools] = useState(false);
   const [isRequestFormOpen, setIsRequestFormOpen] = useState(false);
-  const [isAgentFormOpen, setIsAgentFormOpen] = useState(false);
-  
+
+  // Forms
   const [hubForm, setHubForm] = useState({ name: "", location: "" });
   const [requestForm, setRequestForm] = useState({ product_id: "", hub_id: "", quantity: "100", notes: "" });
-  const [agentForm, setAgentForm] = useState({ hub_id: "", product_id: "", agent_name: "", quantity: "1" });
   
   const [error, setError] = useState<string | null>(null);
 
+  // Queries
   const products = useQuery({ queryKey: ["products"], queryFn: async () => (await api.get<ProductPage>("/products")).data });
   const warehouses = useQuery({ queryKey: ["warehouses"], queryFn: async () => (await api.get<WarehouseRecord[]>("/warehouses")).data });
   const hubs = useQuery({ queryKey: ["hubs"], queryFn: async () => (await api.get<HubRecord[]>("/distribution/hubs")).data });
   const requests = useQuery({ queryKey: ["distribution-requests"], queryFn: async () => (await api.get<AllocationRequest[]>("/distribution/requests")).data });
   const dispatches = useQuery({ queryKey: ["dispatches"], queryFn: async () => (await api.get<DispatchOrder[]>("/distribution/dispatches")).data });
-  
-  const warehouseBalances = useQuery({ 
-    queryKey: ["warehouse-balances"], 
-    queryFn: async () => (await api.get<InventoryBalance[]>("/inventory/balances?location_type=WAREHOUSE")).data 
-  });
-
-  const hubBalances = useQuery({ 
-    queryKey: ["hub-balances"], 
-    queryFn: async () => (await api.get<InventoryBalance[]>("/inventory/balances?location_type=HUB")).data 
-  });
+  const warehouseBalances = useQuery({ queryKey: ["warehouse-balances"], queryFn: async () => (await api.get<InventoryBalance[]>("/inventory/balances?location_type=WAREHOUSE")).data });
+  const hubBalances = useQuery({ queryKey: ["hub-balances"], queryFn: async () => (await api.get<InventoryBalance[]>("/inventory/balances?location_type=HUB")).data });
 
   const productNameById = useMemo(() => new Map((products.data?.items ?? []).map((item) => [item.id, item.name])), [products.data?.items]);
   const hubNameById = useMemo(() => new Map((hubs.data ?? []).map((item) => [item.id, item.name])), [hubs.data]);
   const dispatchByRequestId = useMemo(() => new Map((dispatches.data ?? []).filter((d) => d.allocation_request_id).map((d) => [d.allocation_request_id, d])), [dispatches.data]);
-
+  
   const centralWarehouse = warehouses.data?.[0];
 
+  // System Mutations
   const createHub = useMutation({
-    mutationFn: async () => api.post<HubRecord>("/distribution/hubs", { 
-      ...hubForm, 
-      location: hubForm.location || null,
-      warehouse_id: centralWarehouse?.id 
-    }),
-    onSuccess: async () => {
-      setHubForm({ name: "", location: "" });
-      setError(null);
-      await queryClient.invalidateQueries({ queryKey: ["hubs"] });
-    }
+    mutationFn: async () => api.post<HubRecord>("/distribution/hubs", { ...hubForm, location: hubForm.location || null, warehouse_id: centralWarehouse?.id }),
+    onSuccess: async () => { setHubForm({ name: "", location: "" }); setError(null); await queryClient.invalidateQueries({ queryKey: ["hubs"] }); }
   });
 
   const autoCreateDemoHubs = useMutation({
     mutationFn: async () => {
       if (!centralWarehouse) throw new Error("You must create at least one warehouse before generating hubs.");
       const existingHubs = hubs.data?.map(h => h.name) || [];
-      
       for (const hubName of DEMO_HUBS) {
         if (!existingHubs.includes(hubName)) {
           await api.post("/distribution/hubs", { name: hubName, location: "Demo Location", warehouse_id: centralWarehouse.id });
         }
       }
     },
-    onSuccess: async () => {
-      setError(null);
-      await queryClient.invalidateQueries({ queryKey: ["hubs"] });
-    },
+    onSuccess: async () => { setError(null); await queryClient.invalidateQueries({ queryKey: ["hubs"] }); },
     onError: (err: any) => setError(err.message || "Failed to generate hubs.")
   });
 
   const createRequest = useMutation({
     mutationFn: async () => api.post<AllocationRequest>("/distribution/requests", {
-      product_id: requestForm.product_id,
-      warehouse_id: centralWarehouse?.id,
-      hub_id: requestForm.hub_id,
-      quantity: Number(requestForm.quantity),
-      notes: requestForm.notes || null,
+      product_id: requestForm.product_id, warehouse_id: centralWarehouse?.id, hub_id: requestForm.hub_id, quantity: Number(requestForm.quantity), notes: requestForm.notes || null,
     }),
-    onSuccess: async () => {
-      setRequestForm({ product_id: "", hub_id: "", quantity: "100", notes: "" });
-      setError(null);
-      setIsRequestFormOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ["distribution-requests"] });
-    },
+    onSuccess: async () => { setRequestForm({ product_id: "", hub_id: "", quantity: "100", notes: "" }); setError(null); setIsRequestFormOpen(false); await queryClient.invalidateQueries({ queryKey: ["distribution-requests"] }); },
     onError: () => setError("Request failed. Ensure products and hubs are properly configured."),
   });
 
-  const allocateToAgent = useMutation({
-    mutationFn: async () => api.post("/hubs/sales", {
-      hub_id: agentForm.hub_id,
-      product_id: agentForm.product_id,
-      agent_name: agentForm.agent_name,
-      quantity: Number(agentForm.quantity)
-    }),
-    onSuccess: async () => {
-      setAgentForm({ hub_id: "", product_id: "", agent_name: "", quantity: "1" });
-      setError(null);
-      setIsAgentFormOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ["hub-balances"] });
-    },
-    onError: () => setError("Failed to allocate stock. Please check Hub inventory and try again."),
-  });
 
   return (
-    <AppShell title="Distribution Operations" description="Monitor stock availability, request inventory for Hubs, and map out agent allocations.">
+    <AppShell title="Distribution Hub Transfers" description="Monitor hub stock levels and request inventory transfers from the Central Warehouse.">
       {error && <div className="mb-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
 
       <section className="mb-6 max-w-4xl">
@@ -148,7 +103,6 @@ export default function DistributionPage() {
               {isRequestFormOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
             </div>
           </button>
-
           {isRequestFormOpen && (
             <div className="border-t border-line bg-slate-50/50 p-6">
               <form onSubmit={(e) => { e.preventDefault(); createRequest.mutate(); }}>
@@ -172,7 +126,7 @@ export default function DistributionPage() {
         </div>
       </section>
 
-      {/* CENTRAL WAREHOUSE AVAILABILITY - 1 ITEM PER ROW, SHOWING ZEROES */}
+      {/* CENTRAL WAREHOUSE AVAILABILITY */}
       <section className="mt-6 rounded-md border border-line bg-white">
         <div className="flex items-center gap-2 border-b border-line bg-slate-50/50 px-4 py-3">
           <Boxes className="h-5 w-5 text-slate-600" />
@@ -203,6 +157,7 @@ export default function DistributionPage() {
         </div>
       </section>
 
+      {/* DISTRIBUTION TRACKING */}
       <section className="mt-6 rounded-md border border-line bg-white">
         <div className="border-b border-line px-4 py-3"><h2 className="text-sm font-semibold text-ink">Distribution Tracking</h2></div>
         <div className="overflow-x-auto">
@@ -233,7 +188,7 @@ export default function DistributionPage() {
         </div>
       </section>
 
-      {/* LIVE HUB AVAILABILITY - GROUPED BY HUB, SHOWING ALL ZEROES */}
+      {/* LIVE HUB AVAILABILITY */}
       <section className="mt-6 rounded-md border border-line bg-white">
         <div className="flex items-center gap-2 border-b border-line bg-indigo-50/50 px-4 py-3">
           <Store className="h-5 w-5 text-indigo-600" />
@@ -252,7 +207,6 @@ export default function DistributionPage() {
               {(hubs.data ?? []).map((hub) => {
                 const allProducts = products.data?.items ?? [];
                 if (allProducts.length === 0) return null;
-
                 return (
                   <Fragment key={hub.id}>
                     {allProducts.map((product, index) => {
@@ -279,56 +233,12 @@ export default function DistributionPage() {
         </div>
       </section>
 
-      <section className="mt-6 max-w-4xl">
-        <div className="rounded-md border border-line bg-white shadow-sm overflow-hidden transition-all">
-          <button
-            type="button"
-            onClick={() => setIsAgentFormOpen(!isAgentFormOpen)}
-            className="flex w-full items-center justify-between bg-white px-6 py-4 hover:bg-slate-50 transition-colors focus:outline-none"
-          >
-            <div className="flex items-center gap-3">
-              <UserCheck className="h-6 w-6 text-brand" />
-              <h2 className="text-lg font-semibold text-ink">Allocate Hub Stock to Agent</h2>
-            </div>
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
-              {isAgentFormOpen ? "Close" : "Open Form"}
-              {isAgentFormOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
-            </div>
-          </button>
-
-          {isAgentFormOpen && (
-            <div className="border-t border-line bg-slate-50/50 p-6">
-              <form onSubmit={(e) => { e.preventDefault(); allocateToAgent.mutate(); }}>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <SelectField label="Source Hub" value={agentForm.hub_id} onChange={(e) => setAgentForm({ ...agentForm, hub_id: e.target.value })} required>
-                    <option value="">Select hub</option>
-                    {(hubs.data ?? []).map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
-                  </SelectField>
-                  <SelectField label="Product" value={agentForm.product_id} onChange={(e) => setAgentForm({ ...agentForm, product_id: e.target.value })} required>
-                    <option value="">Select product</option>
-                    {(products.data?.items ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </SelectField>
-                  <TextField label="Agent Name / ID" value={agentForm.agent_name} onChange={(e) => setAgentForm({ ...agentForm, agent_name: e.target.value })} required />
-                  <TextField label="Quantity to Allocate" min={1} type="number" value={agentForm.quantity} onChange={(e) => setAgentForm({ ...agentForm, quantity: e.target.value })} required />
-                  <div className="md:col-span-2 mt-2">
-                    <ActionButton disabled={allocateToAgent.isPending} type="submit" className="w-full h-12 text-base">
-                       {allocateToAgent.isPending ? "Allocating..." : "Allocate to Agent"}
-                    </ActionButton>
-                  </div>
-                </div>
-              </form>
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* ADMIN TOOLS: Hub Generation & Creation */}
+      {/* ADMIN TOOLS */}
       <section className="mt-12 mb-8 border-t border-line pt-8">
         <button onClick={() => setShowAdminTools(!showAdminTools)} className="flex items-center gap-2 text-sm font-semibold text-slate-500 hover:text-ink">
           <Settings2 className="h-4 w-4" />
           {showAdminTools ? "Hide Advanced Tools" : "Show Advanced Tools"}
         </button>
-
         {showAdminTools && (
           <div className="mt-6 grid gap-6 md:grid-cols-2">
             <div className="rounded-md border border-line bg-slate-50 p-6">
@@ -338,7 +248,6 @@ export default function DistributionPage() {
                 {autoCreateDemoHubs.isPending ? "Generating..." : "Generate 10 System Hubs"}
               </ActionButton>
             </div>
-
             <form onSubmit={(e) => { e.preventDefault(); createHub.mutate(); }} className="rounded-md border border-line bg-white p-6">
               <h3 className="font-semibold text-ink mb-4">Manually Create Custom Hub</h3>
               <div className="grid gap-4">
@@ -349,7 +258,6 @@ export default function DistributionPage() {
           </div>
         )}
       </section>
-
     </AppShell>
   );
 }

@@ -14,6 +14,7 @@ type AuthState = {
   accessToken: string | null;
   userRole: string | null;
   userId: string | null;
+  email: string | null;
   mustChangePassword: boolean; // THE FIX: Added to track password reset penalty box
   isOverrideEnabled: boolean;
   setAccessToken: (token: string | null) => void;
@@ -26,6 +27,7 @@ export const useAuthStore = create<AuthState>()(
       accessToken: null,
       userRole: null,
       userId: null,
+      email: null,
       mustChangePassword: false,
       isOverrideEnabled: false,
       setAccessToken: (token) => {
@@ -34,6 +36,7 @@ export const useAuthStore = create<AuthState>()(
           accessToken: token, 
           userRole: decoded?.role || null, 
           userId: decoded?.sub || null,
+          email: decoded?.email || null,
           mustChangePassword: decoded?.must_change_password || false, // THE FIX: Read flag from JWT
           isOverrideEnabled: false 
         });

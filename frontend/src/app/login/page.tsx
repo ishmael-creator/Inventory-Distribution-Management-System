@@ -42,7 +42,7 @@ export default function LoginPage() {
 
   return (
     <main className="grid min-h-screen place-items-center bg-[#eef2f6] px-4">
-      <form onSubmit={onSubmit} className="w-full max-w-md rounded-md border border-line bg-white p-6 shadow-sm">
+      <form suppressHydrationWarning onSubmit={onSubmit} className="w-full max-w-md rounded-md border border-line bg-white p-6 shadow-sm">
         <div className="flex h-10 w-10 items-center justify-center rounded-md bg-brand text-white">
           <LockKeyhole className="h-5 w-5" />
         </div>

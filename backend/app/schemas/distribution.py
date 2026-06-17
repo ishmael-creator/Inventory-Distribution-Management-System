@@ -82,3 +82,21 @@ class HubReceiptCreate(BaseModel):
 
 class HubUpdate(BaseModel):
     manager_id: Optional[uuid.UUID] = None
+
+
+class AgentCreate(BaseModel):
+    name: str
+    phone: Optional[str] = None
+    hub_id: uuid.UUID
+
+
+class AgentAllocationCreate(BaseModel):
+    agent_id: uuid.UUID
+    product_id: uuid.UUID
+    quantity: int
+
+
+class AgentSaleCreate(BaseModel):
+    agent_id: uuid.UUID
+    product_id: uuid.UUID
+    quantity: int

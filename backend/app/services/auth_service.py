@@ -27,7 +27,8 @@ class AuthService:
         token_data = {
             "role": user.role.code, 
             "permissions": user.role.permissions,
-            "must_change_password": user.must_change_password
+            "must_change_password": user.must_change_password,
+            "email": user.email
         }
         return create_access_token(str(user.id), token_data)
 
@@ -90,6 +91,7 @@ class AuthService:
         token_data = {
             "role": user.role.code, 
             "permissions": user.role.permissions,
-            "must_change_password": False
+            "must_change_password": False,
+            "email": user.email
         }
         return create_access_token(str(user.id), token_data)

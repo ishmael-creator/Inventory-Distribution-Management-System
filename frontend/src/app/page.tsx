@@ -39,6 +39,11 @@ export default function DashboardPage() {
     queryFn: async () => (await api.get<InventoryTransaction[]>("/inventory/transactions")).data,
   });
 
+  const hubs = useQuery({
+    queryKey: ["hubs"],
+    queryFn: async () => (await api.get<any[]>("/distribution/hubs")).data,
+  });
+
   const queryClient = useQueryClient();
 
   const factoryReset = useMutation({
@@ -130,8 +135,20 @@ export default function DashboardPage() {
   const totalTransactions = filteredTransactions.length;
   const activeLocations = stockDistribution.length;
 
+  // Craft a human-friendly title
+  let dynamicTitle = `${userRole?.replace("_", " ") || "System"} Dashboard`;
+  if (userRole === "HUB_OFFICER" && hubs.data?.[0]) {
+    dynamicTitle = `${hubs.data[0].name} Hub Dashboard`;
+  } else if (userRole === "WAREHOUSE_OFFICER") {
+    dynamicTitle = "Central Warehouse Dashboard";
+  } else if (userRole === "DISTRIBUTION_TEAM") {
+    dynamicTitle = "Distribution Command Center";
+  } else if (userRole === "MANUFACTURER") {
+    dynamicTitle = "Manufacturer Dashboard";
+  }
+
   return (
-    <AppShell title={`${userRole?.replace("_", " ") || "System"} Dashboard`} description="Role-specific overview of your inventory operations.">
+    <AppShell title={dynamicTitle} description="Role-specific overview of your inventory operations.">
       
       <section className="mb-6 flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-2 text-brand font-semibold">

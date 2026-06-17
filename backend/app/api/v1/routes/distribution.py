@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
+from typing import Optional
 from app.api.deps import require_permissions, get_current_user
 from app.db.session import get_db
 from app.models.inventory import AllocationRequest, DispatchOrder
@@ -16,7 +16,10 @@ from app.schemas.distribution import (
     HubCreate,
     HubRead,
     HubReceiptCreate,
-    HubUpdate, # <-- Added this import! (Make sure you put the schema in this file)
+    HubUpdate,
+     AgentCreate,
+    AgentAllocationCreate,
+    AgentSaleCreate, # <-- Added this import! (Make sure you put the schema in this file)
 )
 from app.services.distribution_service import DistributionService
 
@@ -141,3 +144,53 @@ def assign_hub_manager(
     db.refresh(hub)
 
     return hub
+
+@router.post("/agents")
+def create_agent(payload: AgentCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER"]: raise HTTPException(403)
+    # THE FIX: We are now passing current_user.id
+    return DistributionService(db).create_agent(payload, current_user.id)
+
+@router.get("/agents")
+def list_agents(hub_id: Optional[uuid.UUID] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER", "HUB_OFFICER"]: 
+        raise HTTPException(403, "Not authorized to view agents.")
+        
+    # 🔒 STRICT ISOLATION: Force Hub Officers to only see their own agents
+    if current_user.role.code == "HUB_OFFICER" and current_user.assigned_hub_id:
+        hub_id = current_user.assigned_hub_id
+        
+    return DistributionService(db).get_agents(hub_id)
+
+@router.post("/agents/allocate")
+def allocate_stock(payload: AgentAllocationCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER"]: raise HTTPException(403)
+    return DistributionService(db).allocate_to_agent(payload, current_user.id)
+
+@router.post("/agents/allocations/{allocation_id}/confirm")
+def confirm_handover(allocation_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role.code not in ["HUB_OFFICER", "SUPER_ADMIN", "MANAGER"]: raise HTTPException(403)
+    return DistributionService(db).confirm_agent_handover(allocation_id, current_user.id)
+
+@router.post("/agents/sales")
+def record_sale(payload: AgentSaleCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER"]: raise HTTPException(403)
+    return DistributionService(db).record_agent_sale(payload, current_user.id)
+
+
+@router.get("/agents/allocations")
+def list_allocations(hub_id: Optional[uuid.UUID] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role.code not in ["HUB_OFFICER", "DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER"]: raise HTTPException(403)
+    return DistributionService(db).get_agent_allocations(hub_id)
+
+@router.post("/agents/return")
+def return_stock(payload: AgentSaleCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER", "HUB_OFFICER"]: raise HTTPException(403)
+    return DistributionService(db).return_agent_stock(payload, current_user.id)
+
+@router.delete("/agents/{agent_id}")
+def delete_agent(agent_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # Restrict deletion rights to Super Admins and Distribution Team
+    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN"]: 
+        raise HTTPException(403, "Not authorized to delete agents.")
+    return DistributionService(db).delete_agent(agent_id, current_user.id)

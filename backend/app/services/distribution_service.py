@@ -1,15 +1,14 @@
 import uuid
+from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
-from app.models.inventory import AllocationRequest, DispatchOrder, InventoryBalance, InventoryTransaction
-from app.models.user import Hub, User, Role
+from app.models.inventory import AllocationRequest, DispatchOrder, InventoryBalance, InventoryTransaction, AgentAllocation, AgentSale
+from app.models.user import Hub, User, Role, Agent
 from app.models.product import Product
 from app.core.enums import RoleCode
-from app.schemas.distribution import HubCreate, AllocationRequestCreate, AllocationRequestReview, HubReceiptCreate
-
-# 🔥 THE FIX: Import the Universal Push Engine
+from app.schemas.distribution import HubCreate, AllocationRequestCreate, AllocationRequestReview, HubReceiptCreate, AgentCreate, AgentAllocationCreate, AgentSaleCreate
 from app.utils.push_notifier import create_system_notification
 
 
@@ -184,11 +183,12 @@ class DistributionService:
             "dispatch_order"
         )
 
-        # 2. Targeted Push to Hub Manager
-        if hub and hub.manager_id:
+        # 2. Targeted Push exclusively to Officers assigned to this specific Hub
+        hub_officers = self.db.scalars(select(User).where(User.assigned_hub_id == req.hub_id, User.is_active == True)).all()
+        for officer in hub_officers:
             create_system_notification(
                 db=self.db,
-                user_id=hub.manager_id,
+                user_id=officer.id,
                 title="Incoming Dispatch",
                 message=f"Heads up: {qty} units of {product_name} have just been dispatched from the Central Warehouse and are en route to your location ({hub_name}).",
                 reference_id=str(dispatch.id),
@@ -254,8 +254,7 @@ class DistributionService:
             "dispatch_order"
         )
 
-
-        # 🔥 THE FIX: Notify the Warehouse Team that their truck arrived safely
+        # Notify the Warehouse Team that their truck arrived safely
         self._notify_role(
             RoleCode.WAREHOUSE_OFFICER,
             "Stock Received at Hub",
@@ -267,3 +266,193 @@ class DistributionService:
         self.db.commit()
         self.db.refresh(dispatch)
         return dispatch
+    
+    def create_agent(self, payload: AgentCreate, admin_user_id: uuid.UUID):
+        agent_code = f"AGT-{uuid.uuid4().hex[:6].upper()}"
+        
+        # 1. Fetch the AGENT role from the database
+        agent_role = self.db.query(Role).filter_by(code=RoleCode.AGENT).first()
+        if not agent_role:
+            raise HTTPException(500, "System AGENT role is missing. Cannot create agent.")
+            
+        # 2. Create a 'Shadow User' to satisfy the strict 1-to-1 database constraint
+        # This gives them a real system identity without granting them actual login access
+        shadow_user = User(
+            id=uuid.uuid4(),
+            email=f"{agent_code.lower()}@upenergy.local",
+            full_name=payload.name,
+            hashed_password="no_login_allowed_yet",
+            role_id=agent_role.id,
+            is_active=True
+        )
+        self.db.add(shadow_user)
+        self.db.flush() # Locks in the shadow_user.id without fully committing yet
+        
+        # 3. Create the actual Agent Profile
+        agent = Agent(
+            id=uuid.uuid4(), 
+            name=payload.name, 
+            hub_id=payload.hub_id,
+            agent_code=agent_code,
+            user_id=shadow_user.id, # Link to their own unique shadow ID, not the Admin's!
+            territory=payload.phone
+        )
+        self.db.add(agent)
+        self.db.commit()
+        self.db.refresh(agent)
+        return agent
+    
+    def get_agents(self, hub_id: Optional[uuid.UUID] = None):
+        # Enforce that only active agents are retrieved
+        query = self.db.query(Agent).filter(Agent.is_active == True)
+        if hub_id: query = query.filter(Agent.hub_id == hub_id)
+        return query.all()
+    
+    def delete_agent(self, agent_id: uuid.UUID, user_id: uuid.UUID):
+        agent = self.db.query(Agent).filter_by(id=agent_id).first()
+        if not agent: raise HTTPException(404, "Agent not found")
+
+        # Soft delete the Agent profile
+        agent.is_active = False
+
+        # Soft delete their underlying Shadow User to fully lock their system footprint
+        shadow_user = self.db.query(User).filter_by(id=agent.user_id).first()
+        if shadow_user:
+            shadow_user.is_active = False
+
+        self.db.commit()
+        return {"status": "success", "message": "Agent deleted successfully"}
+
+    def get_agent_allocations(self, hub_id: Optional[uuid.UUID] = None):
+        query = self.db.query(AgentAllocation)
+        if hub_id:
+            # Join the Agent table so we can filter by the Agent's Hub ID
+            query = query.join(Agent).filter(Agent.hub_id == hub_id)
+        return query.order_by(AgentAllocation.created_at.desc()).all()
+
+    def allocate_to_agent(self, payload: AgentAllocationCreate, user_id: uuid.UUID):
+        agent = self.db.query(Agent).filter_by(id=payload.agent_id).first()
+        if not agent: raise HTTPException(404, "Agent not found")
+
+        # 🚨 THE FIX: Fail Fast if the Hub doesn't have the physical stock!
+        hub_bal = self.db.query(InventoryBalance).filter_by(
+            location_id=agent.hub_id, 
+            product_id=payload.product_id
+        ).first()
+        
+        available_qty = hub_bal.quantity if hub_bal else 0
+        if available_qty < payload.quantity:
+            product = self.db.get(Product, payload.product_id)
+            raise HTTPException(
+                400, 
+                f"Cannot allocate. The Hub only has {available_qty} units of {product.name if product else 'this product'} available."
+            )
+
+        # If they have the stock, proceed normally
+        allocation = AgentAllocation(
+            id=uuid.uuid4(), agent_id=agent.id, product_id=payload.product_id,
+            quantity=payload.quantity, status="PENDING", allocated_by=user_id
+        )
+        self.db.add(allocation)
+        
+        product = self.db.get(Product, payload.product_id)
+        
+        # Notify exclusively the officers assigned to this agent's hub
+        hub_officers = self.db.scalars(select(User).where(User.assigned_hub_id == agent.hub_id, User.is_active == True)).all()
+        for officer in hub_officers:
+            create_system_notification(
+                db=self.db, 
+                user_id=officer.id,
+                title="New Agent Allocation",
+                message=f"Distribution has allocated {payload.quantity} units of {product.name if product else 'Product'} to Agent {agent.name}.",
+                reference_id=str(allocation.id), 
+                reference_type="agent_allocation", 
+                url="/hubs"
+            )
+            
+        self.db.commit()
+        self.db.refresh(allocation)
+        return allocation
+
+    def confirm_agent_handover(self, allocation_id: uuid.UUID, user_id: uuid.UUID):
+        allocation = self.db.query(AgentAllocation).filter_by(id=allocation_id).first()
+        if not allocation or allocation.status != "PENDING": raise HTTPException(400, "Invalid allocation.")
+            
+        agent = self.db.query(Agent).filter_by(id=allocation.agent_id).first()
+        
+        hub_bal = self.db.query(InventoryBalance).filter_by(location_id=agent.hub_id, product_id=allocation.product_id).with_for_update().first()
+        if not hub_bal or hub_bal.quantity < allocation.quantity: raise HTTPException(400, "Insufficient Hub stock.")
+        hub_bal.quantity -= allocation.quantity
+
+        agent_bal = self.db.query(InventoryBalance).filter_by(location_id=agent.id, product_id=allocation.product_id).first()
+        if not agent_bal:
+            agent_bal = InventoryBalance(product_id=allocation.product_id, location_type="AGENT", location_id=agent.id, quantity=allocation.quantity)
+            self.db.add(agent_bal)
+        else:
+            agent_bal.quantity += allocation.quantity
+
+        allocation.status = "HANDED_OVER"
+        allocation.handed_over_by = user_id
+        
+        tx = InventoryTransaction(
+            product_id=allocation.product_id, transaction_type="TRANSFER",
+            from_location_type="HUB", from_location_id=agent.hub_id,
+            to_location_type="AGENT", to_location_id=agent.id,
+            quantity=allocation.quantity, created_by=user_id, notes=f"Handed to {agent.name}"
+        )
+        self.db.add(tx)
+        self.db.commit()
+        self.db.refresh(allocation)
+        return allocation
+
+    def record_agent_sale(self, payload: AgentSaleCreate, user_id: uuid.UUID):
+        agent = self.db.query(Agent).filter_by(id=payload.agent_id).first()
+        if not agent: raise HTTPException(404, "Agent not found")
+        
+        agent_bal = self.db.query(InventoryBalance).filter_by(location_id=agent.id, product_id=payload.product_id).with_for_update().first()
+        if not agent_bal or agent_bal.quantity < payload.quantity: raise HTTPException(400, "Agent lacks sufficient stock.")
+        agent_bal.quantity -= payload.quantity
+        
+        sale = AgentSale(agent_id=agent.id, product_id=payload.product_id, quantity=payload.quantity, recorded_by=user_id)
+        self.db.add(sale)
+        
+        tx = InventoryTransaction(
+            product_id=payload.product_id, transaction_type="SALE",
+            from_location_type="AGENT", from_location_id=agent.id,
+            to_location_type=None, to_location_id=None,
+            quantity=payload.quantity, created_by=user_id, notes=f"Sale by {agent.name}"
+        )
+        self.db.add(tx)
+        self.db.commit()
+        return sale
+
+
+def return_agent_stock(self, payload: AgentSaleCreate, user_id: uuid.UUID):
+        # We reuse AgentSaleCreate schema since it requires the exact same fields: agent_id, product_id, quantity
+        agent = self.db.query(Agent).filter_by(id=payload.agent_id).first()
+        if not agent: raise HTTPException(404, "Agent not found")
+        
+        # 1. Deduct from Agent's Backpack
+        agent_bal = self.db.query(InventoryBalance).filter_by(location_id=agent.id, product_id=payload.product_id).with_for_update().first()
+        if not agent_bal or agent_bal.quantity < payload.quantity: raise HTTPException(400, "Agent does not have enough stock to return.")
+        agent_bal.quantity -= payload.quantity
+        
+        # 2. Add back to the Hub
+        hub_bal = self.db.query(InventoryBalance).filter_by(location_id=agent.hub_id, product_id=payload.product_id).first()
+        if not hub_bal:
+            hub_bal = InventoryBalance(id=uuid.uuid4(), product_id=payload.product_id, location_type="HUB", location_id=agent.hub_id, quantity=payload.quantity)
+            self.db.add(hub_bal)
+        else:
+            hub_bal.quantity += payload.quantity
+            
+        # 3. Log the Return Transaction
+        tx = InventoryTransaction(
+            id=uuid.uuid4(),
+            product_id=payload.product_id, transaction_type="TRANSFER",
+            from_location_type="AGENT", from_location_id=agent.id,
+            to_location_type="HUB", to_location_id=agent.hub_id,
+            quantity=payload.quantity, created_by=user_id, notes=f"Stock returned to Hub by {agent.name}"
+        )
+        self.db.add(tx)
+        self.db.commit()
+        return tx

@@ -102,3 +102,21 @@ export type InventoryTransaction = {
   reference_type: string | null;
   created_at: string;
 };
+
+export type AgentRecord = {
+  id: string;
+  name: string;
+  phone: string | null;
+  hub_id: string;
+  agent_code: string;
+  is_active: boolean;
+};
+
+export type AgentAllocationRecord = {
+  id: string;
+  agent_id: string;
+  product_id: string;
+  quantity: number;
+  status: "PENDING" | "HANDED_OVER";
+  created_at: string;
+};

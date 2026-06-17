@@ -113,3 +113,22 @@ class Receipt(UUIDPrimaryKeyMixin, Base):
     quantity_received: Mapped[int] = mapped_column(Integer)
     notes: Mapped[str | None] = mapped_column(Text)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AgentAllocation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "agent_allocations"
+    
+    agent_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("agents.id"))
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"))
+    quantity: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String, default="PENDING")
+    allocated_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    handed_over_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+
+class AgentSale(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "agent_sales"
+    
+    agent_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("agents.id"))
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"))
+    quantity: Mapped[int] = mapped_column(Integer)
+    recorded_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
