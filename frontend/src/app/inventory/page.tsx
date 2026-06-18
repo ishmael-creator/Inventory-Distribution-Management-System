@@ -163,7 +163,7 @@ export default function InventoryLedgerPage() {
                   </td>
                   <td className="px-4 py-3">
                     <span className="font-semibold text-brand text-xs uppercase tracking-wider bg-teal-50 px-2 py-1 rounded">
-                      {tx.transaction_type.replaceAll("_", " ")}
+                      {tx.transaction_type === "DISPATCH" && tx.from_location_type === "AGENT" ? "AGENT SALE" : tx.transaction_type.replaceAll("_", " ")}
                     </span>
                   </td>
                   <td className="px-4 py-3 font-medium text-ink">{productNameById.get(tx.product_id) ?? tx.product_id}</td>

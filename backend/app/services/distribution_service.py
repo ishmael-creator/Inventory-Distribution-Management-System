@@ -417,7 +417,7 @@ class DistributionService:
         self.db.add(sale)
         
         tx = InventoryTransaction(
-            product_id=payload.product_id, transaction_type="SALE",
+            product_id=payload.product_id, transaction_type="DISPATCH",
             from_location_type="AGENT", from_location_id=agent.id,
             to_location_type=None, to_location_id=None,
             quantity=payload.quantity, created_by=user_id, notes=f"Sale by {agent.name}"

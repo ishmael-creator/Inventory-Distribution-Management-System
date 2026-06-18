@@ -65,7 +65,7 @@ export default function ReportsPage() {
     
     const rows = filteredData.map(tx => [
       new Date(tx.created_at).toLocaleString().replace(",", ""),
-      tx.transaction_type,
+      tx.transaction_type === "DISPATCH" && tx.from_location_type === "AGENT" ? "AGENT SALE" : tx.transaction_type,
       productNameById.get(tx.product_id) || tx.product_id,
       tx.quantity.toString(),
       tx.from_location_type || "N/A",
@@ -152,7 +152,9 @@ export default function ReportsPage() {
               {filteredData.map((tx) => (
                 <tr key={tx.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 text-slate-500">{new Date(tx.created_at).toLocaleString()}</td>
-                  <td className="px-4 py-3 font-semibold text-brand">{tx.transaction_type.replaceAll("_", " ")}</td>
+                  <td className="px-4 py-3 font-semibold text-brand">
+                    {tx.transaction_type === "DISPATCH" && tx.from_location_type === "AGENT" ? "AGENT SALE" : tx.transaction_type.replaceAll("_", " ")}
+                  </td>
                   <td className="px-4 py-3 text-ink font-medium">{productNameById.get(tx.product_id) ?? tx.product_id}</td>
                   <td className="px-4 py-3 font-bold text-slate-700">{tx.quantity}</td>
                   <td className="px-4 py-3 text-xs text-slate-500">

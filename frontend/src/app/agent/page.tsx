@@ -35,7 +35,7 @@ export default function AgentDashboardPage() {
 
   const agentSalesHistory = useMemo(() => {
     return (transactions.data ?? [])
-      .filter(tx => tx.from_location_id === activeAgentId && tx.transaction_type === "SALE")
+      .filter(tx => tx.from_location_id === activeAgentId && tx.transaction_type === "DISPATCH" && !tx.to_location_type)
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }, [transactions.data, activeAgentId]);
 
