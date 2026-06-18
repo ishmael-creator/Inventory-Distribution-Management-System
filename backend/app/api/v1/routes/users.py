@@ -90,8 +90,12 @@ def delete_user(
 def reset_password(user_id: uuid.UUID, payload: PasswordResetPayload, _: User = Depends(require_permissions("users.write")), db: Session = Depends(get_db)):
     user = db.get(User, user_id)
     if not user:
-        raise HTTPException(status_code=404, detail="User not found.")
+        raise HTTPException(status_code=404, detail="User not found.") 
         
     user.hashed_password = hash_password(payload.new_password)
+    
+    # THE FIX: Force them into the penalty box so they MUST change this temporary password!
+    user.must_change_password = True 
+    
     db.commit()
-    return {"status": "success", "message": "Password updated securely."}
+    return {"status": "success", "message": "Password updated securely and user forced to reset."}
