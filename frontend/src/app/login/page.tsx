@@ -24,7 +24,7 @@ export default function LoginPage() {
     try {
       const response = await api.post<{ access_token: string }>("/auth/login", {
         email: email.trim(),
-        password,
+        password: password.trim(), // THE FIX: Destroys invisible copied spaces!
       });
 
       setAccessToken(response.data.access_token);

@@ -42,7 +42,8 @@ class AuthService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role code")
 
         # Generate a secure 12-character temporary password
-        alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+        # THE FIX: Purely alphanumeric so email clients never mangle the HTML
+        alphabet = string.ascii_letters + string.digits
         temp_password = ''.join(secrets.choice(alphabet) for i in range(12))
 
         new_user = User(

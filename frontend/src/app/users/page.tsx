@@ -41,8 +41,8 @@ export default function UserManagementPage() {
     onSuccess: async () => {
       setForm({ full_name: "", email: "", role_code: "", assigned_hub_id: "" });
       setError(null);
-      // THE FIX: Added success message so you know to check the terminal
-      setSuccess("User created successfully! Check your backend terminal for their temporary password.");
+      // THE FIX: Accurate success message
+      setSuccess("User created successfully! The system has emailed them their secure login instructions.");
       await queryClient.invalidateQueries({ queryKey: ["users"] });
     },
     onError: (err: any) => {

@@ -113,7 +113,10 @@ export function AppShell({ title, description, children }: { title: string; desc
     if (newPassword.length < 8) return setError("Password must be at least 8 characters long.");
     setIsSubmitting(true);
     try {
-      const response = await api.post<{ access_token: string }>("/auth/change-password", { old_password: oldPassword, new_password: newPassword });
+      const response = await api.post<{ access_token: string }>("/auth/change-password", { 
+        old_password: oldPassword.trim(), // ✅ THE FIX: Destroys invisible copied spaces!
+        new_password: newPassword 
+      });
       setAccessToken(response.data.access_token);
     } catch (err: any) {
       setError(err?.response?.data?.detail || "Failed to update password.");
