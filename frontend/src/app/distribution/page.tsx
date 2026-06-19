@@ -2,12 +2,13 @@
 
 import { useMemo, useState, Fragment } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ClipboardCheck, Boxes, Settings2, ChevronDown, ChevronUp, Store } from "lucide-react";
+import { ClipboardCheck, Boxes, Settings2, ChevronDown, ChevronUp, Store, Trash2 } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionButton } from "@/components/ui/action-button";
 import { SelectField, TextField } from "@/components/ui/form-field";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/stores/auth-store";
 import type { AllocationRequest, DispatchOrder, HubRecord, ProductPage, WarehouseRecord, InventoryBalance } from "@/types/inventory";
 
 const DEMO_HUBS = ["Ablekuma", "Konongo", "Manpong", "Offinso", "Adukrom", "Koforidua", "Oda", "Nkawkaw", "Kasoa", "Assin Fosu"];
@@ -30,6 +31,7 @@ function requestLabel(request: AllocationRequest, dispatch?: DispatchOrder) {
 
 export default function DistributionPage() {
   const queryClient = useQueryClient();
+  const userRole = useAuthStore((state) => state.userRole);
   const [showAdminTools, setShowAdminTools] = useState(false);
   const [isRequestFormOpen, setIsRequestFormOpen] = useState(false);
 
@@ -82,6 +84,14 @@ export default function DistributionPage() {
     onError: () => setError("Request failed. Ensure products and hubs are properly configured."),
   });
 
+  const deleteHub = useMutation({
+    mutationFn: async (hubId: string) => api.delete(`/distribution/hubs/${hubId}`),
+    onSuccess: async () => { 
+      setError(null); 
+      await queryClient.invalidateQueries({ queryKey: ["hubs"] }); 
+    },
+    onError: (err: any) => setError(err.response?.data?.detail || "Failed to delete hub.")
+  });
 
   return (
     <AppShell title="Distribution Hub Transfers" description="Monitor hub stock levels and request inventory transfers from the Central Warehouse.">
@@ -239,8 +249,10 @@ export default function DistributionPage() {
           <Settings2 className="h-4 w-4" />
           {showAdminTools ? "Hide Advanced Tools" : "Show Advanced Tools"}
         </button>
+
         {showAdminTools && (
           <div className="mt-6 grid gap-6 md:grid-cols-2">
+            
             <div className="rounded-md border border-line bg-slate-50 p-6">
               <h3 className="font-semibold text-ink mb-2">Initialize Demo Hubs</h3>
               <p className="text-sm text-slate-600 mb-4">Clicking this will automatically create all 10 hardcoded system hubs and bind them to the Central Warehouse.</p>
@@ -248,6 +260,7 @@ export default function DistributionPage() {
                 {autoCreateDemoHubs.isPending ? "Generating..." : "Generate 10 System Hubs"}
               </ActionButton>
             </div>
+
             <form onSubmit={(e) => { e.preventDefault(); createHub.mutate(); }} className="rounded-md border border-line bg-white p-6">
               <h3 className="font-semibold text-ink mb-4">Manually Create Custom Hub</h3>
               <div className="grid gap-4">
@@ -255,6 +268,41 @@ export default function DistributionPage() {
                 <ActionButton disabled={createHub.isPending} type="submit" variant="secondary">Save Hub</ActionButton>
               </div>
             </form>
+
+            {/* NEW: HUB DIRECTORY & DELETION */}
+            {userRole === "SUPER_ADMIN" && (
+              <div className="rounded-md border border-line bg-white p-6 md:col-span-2 shadow-sm">
+                <h3 className="font-semibold text-ink mb-4">Manage Active Hubs</h3>
+                <div className="overflow-y-auto max-h-60 border border-line rounded-md">
+                  <table className="w-full text-left text-sm">
+                    <tbody className="divide-y divide-line">
+                      {(hubs.data ?? []).map((hub) => (
+                        <tr key={hub.id} className="hover:bg-slate-50">
+                          <td className="px-4 py-3 font-medium text-ink">{hub.name}</td>
+                          <td className="px-4 py-3 text-slate-500">{hub.location || "No Location Specified"}</td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm(`Are you sure you want to delete ${hub.name}? This will hide it from all screens and revoke access for its assigned officers.`)) {
+                                  deleteHub.mutate(hub.id);
+                                }
+                              }}
+                              disabled={deleteHub.isPending}
+                              className="inline-flex items-center gap-1 rounded bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100 transition-colors"
+                            >
+                              <Trash2 className="h-3 w-3" /> Remove
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {hubs.data?.length === 0 && <tr><td colSpan={3} className="px-4 py-8 text-center text-slate-500">No active hubs found.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+            
           </div>
         )}
       </section>

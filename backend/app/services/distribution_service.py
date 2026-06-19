@@ -47,6 +47,21 @@ class DistributionService:
         self.db.refresh(hub)
         return hub
 
+    def delete_hub(self, hub_id: uuid.UUID, user_id: uuid.UUID):
+        hub = self.db.query(Hub).filter_by(id=hub_id).first()
+        if not hub: raise HTTPException(404, "Hub not found")
+        
+        # Soft delete the Hub
+        hub.is_active = False
+        
+        # Also soft-delete any Hub Officers assigned exclusively to this hub to revoke their access
+        officers = self.db.query(User).filter_by(assigned_hub_id=hub.id).all()
+        for officer in officers:
+            officer.is_active = False
+
+        self.db.commit()
+        return {"status": "success", "message": "Hub deleted successfully"}
+
     def create_request(self, payload: AllocationRequestCreate, user_id: uuid.UUID):
         req = AllocationRequest(
             id=uuid.uuid4(),

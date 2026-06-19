@@ -30,7 +30,8 @@ def list_hubs(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    query = select(Hub)
+    # THE FIX: Only fetch active hubs!
+    query = select(Hub).where(Hub.is_active == True)
     
     # STRICT ISOLATION: If they are a Hub Officer, they only get to see their own Hub
     if current_user.role.code == "HUB_OFFICER" and current_user.assigned_hub_id:
@@ -194,3 +195,10 @@ def delete_agent(agent_id: uuid.UUID, db: Session = Depends(get_db), current_use
     if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN"]: 
         raise HTTPException(403, "Not authorized to delete agents.")
     return DistributionService(db).delete_agent(agent_id, current_user.id)
+
+@router.delete("/hubs/{hub_id}")
+def delete_hub(hub_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # Restrict deletion rights to Super Admins
+    if current_user.role.code != "SUPER_ADMIN": 
+        raise HTTPException(403, "Not authorized to delete hubs.")
+    return DistributionService(db).delete_hub(hub_id, current_user.id)
