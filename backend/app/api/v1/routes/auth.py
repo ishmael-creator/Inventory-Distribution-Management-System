@@ -1,7 +1,7 @@
 from typing import Optional
 import uuid
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, status, BackgroundTasks
 from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.db.session import get_db
@@ -19,6 +19,7 @@ class CreateUserRequest(BaseModel):
     full_name: str
     role_code: RoleCode
     hub_id: Optional[uuid.UUID] = None
+    assigned_region: Optional[str] = None  # <-- NEW
 
 class ChangePasswordRequest(BaseModel):
     old_password: str
@@ -31,8 +32,12 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
     return TokenResponse(access_token=token)
 
 @router.post("/create-user", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-def create_user(payload: CreateUserRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    # Safeguard: Only SUPER_ADMIN can create users
+def create_user(
+    payload: CreateUserRequest, 
+    background_tasks: BackgroundTasks, # NEW
+    current_user: User = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
     if current_user.role.code != RoleCode.SUPER_ADMIN:
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Not authorized to create users")
@@ -41,7 +46,9 @@ def create_user(payload: CreateUserRequest, current_user: User = Depends(get_cur
         email=payload.email,
         full_name=payload.full_name,
         role_code=payload.role_code,
-        hub_id=payload.hub_id
+        hub_id=payload.hub_id,
+        assigned_region=payload.assigned_region,
+        background_tasks=background_tasks # NEW: Pass it down
     )
 
 @router.post("/change-password", response_model=TokenResponse)

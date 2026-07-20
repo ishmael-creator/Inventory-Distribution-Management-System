@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-
+from fastapi_cache.decorator import cache
 from app.api.deps import require_permissions
 from app.db.session import get_db
 from app.models.user import User
@@ -15,6 +15,7 @@ router = APIRouter()
 
 
 @router.get("", response_model=Page[ProductRead])
+@cache(expire=3600) 
 def list_products(
     search: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),

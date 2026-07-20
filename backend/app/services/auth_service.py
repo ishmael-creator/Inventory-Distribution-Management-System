@@ -1,7 +1,7 @@
 import uuid
 import secrets
 import string
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 from app.core.security import create_access_token, verify_password, hash_password
@@ -32,7 +32,7 @@ class AuthService:
         }
         return create_access_token(str(user.id), token_data)
 
-    def admin_create_user(self, email: str, full_name: str, role_code: RoleCode, hub_id: uuid.UUID = None) -> User:
+    def admin_create_user(self, email: str, full_name: str, role_code: RoleCode, hub_id: uuid.UUID = None, assigned_region: str = None, background_tasks: BackgroundTasks = None) -> User:
         existing = self.db.scalar(select(User).where(User.email == email.lower()))
         if existing:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
@@ -53,6 +53,7 @@ class AuthService:
             hashed_password=hash_password(temp_password),
             role_id=role.id,
             assigned_hub_id=hub_id,
+            assigned_region=assigned_region,
             is_active=True,
             must_change_password=True # Flag for forced reset
         )
@@ -71,8 +72,11 @@ class AuthService:
         self.db.commit()
         self.db.refresh(new_user)
 
-        # Trigger the email
-        send_welcome_email(new_user.email, new_user.full_name, temp_password)
+        # 🔥 THE FIX: Hand the email off to a background worker so the UI doesn't freeze!
+        if background_tasks:
+            background_tasks.add_task(send_welcome_email, new_user.email, new_user.full_name, temp_password)
+        else:
+            send_welcome_email(new_user.email, new_user.full_name, temp_password)
 
         return new_user
 

@@ -18,6 +18,7 @@ class UserCreatePayload(BaseModel):
     password: str
     role_code: str
     assigned_hub_id: uuid.UUID | None = None
+    assigned_region: str | None = None # <-- NEW
 
 class PasswordResetPayload(BaseModel):
     new_password: str

@@ -29,6 +29,10 @@ export default function HubsPage() {
   const dispatches = useQuery({ queryKey: ["dispatches"], queryFn: async () => (await api.get<DispatchOrder[]>("/distribution/dispatches")).data });
   const balances = useQuery({ queryKey: ["balances"], queryFn: async () => (await api.get<InventoryBalance[]>("/inventory/balances")).data });
   
+// Walk-In Return State
+  const [isWalkInReturnOpen, setIsWalkInReturnOpen] = useState(false);
+  const [walkInForm, setWalkInForm] = useState({ agent_code: "", product_id: "", quantity: "1" });
+
   // Agent Data Queries
   const agents = useQuery({ queryKey: ["agents"], queryFn: async () => (await api.get<AgentRecord[]>("/distribution/agents")).data });
   const allocations = useQuery({ 
@@ -81,6 +85,22 @@ export default function HubsPage() {
       await queryClient.invalidateQueries({ queryKey: ["balances"] }); await queryClient.invalidateQueries({ queryKey: ["transactions"] });
     },
     onError: (err: any) => setError(err.response?.data?.detail || "Failed to process complaint."),
+  });
+
+  const processWalkInReturn = useMutation({
+    mutationFn: async () => api.post("/distribution/agents/return", { 
+      ...walkInForm, 
+      quantity: Number(walkInForm.quantity),
+      target_hub_id: activeHubId // The hub the officer is currently logged into
+    }),
+    onSuccess: async () => {
+      setWalkInForm({ agent_code: "", product_id: "", quantity: "1" });
+      setIsWalkInReturnOpen(false); 
+      setError(null);
+      await queryClient.invalidateQueries({ queryKey: ["balances"] }); 
+      alert("Walk-in return successfully processed! Stock added to your Hub.");
+    },
+    onError: (err: any) => setError(err.response?.data?.detail || "Failed to process walk-in return."),
   });
 
   const markRepaired = useMutation({
@@ -165,6 +185,45 @@ export default function HubsPage() {
         </div>
       </section>
 
+      {/* WALK-IN AGENT RETURN BAR */}
+      <section className="mb-6">
+        <div className="rounded-md border border-line bg-white shadow-sm overflow-hidden transition-all">
+          <button type="button" onClick={() => setIsWalkInReturnOpen(!isWalkInReturnOpen)} className="flex w-full items-center justify-between bg-indigo-50 px-6 py-4 hover:bg-indigo-100 transition-colors focus:outline-none">
+            <div className="flex items-center gap-3">
+              <UserCheck className="h-6 w-6 text-indigo-600" />
+              <h2 className="text-lg font-semibold text-indigo-900">Process Walk-In Agent Return</h2>
+            </div>
+            <div className="flex items-center gap-2 text-sm font-medium text-indigo-700">
+              {isWalkInReturnOpen ? "Close" : "Open Form"}
+              {isWalkInReturnOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+            </div>
+          </button>
+          
+          {isWalkInReturnOpen && (
+            <div className="border-t border-indigo-100 bg-white p-6">
+              <form onSubmit={(e) => { e.preventDefault(); processWalkInReturn.mutate(); }}>
+                <div className="grid gap-4 md:grid-cols-4 items-end">
+                  
+                  <TextField label="Agent Code (e.g. AGT-1A2B)" value={walkInForm.agent_code} onChange={(e) => setWalkInForm({ ...walkInForm, agent_code: e.target.value.toUpperCase() })} required placeholder="AGT-XXXX" />
+                  
+                  <SelectField label="Product Being Returned" value={walkInForm.product_id} onChange={(e) => setWalkInForm({ ...walkInForm, product_id: e.target.value })} required>
+                    <option value="">Select product...</option>
+                    {(products.data?.items ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </SelectField>
+                  
+                  <TextField label="Quantity" min={1} type="number" value={walkInForm.quantity} onChange={(e) => setWalkInForm({ ...walkInForm, quantity: e.target.value })} required />
+                  
+                  <ActionButton disabled={processWalkInReturn.isPending || !activeHubId} type="submit" className="w-full h-10 bg-indigo-600 hover:bg-indigo-700">
+                    {processWalkInReturn.isPending ? "Processing..." : "Receive Stock"}
+                  </ActionButton>
+                  
+                </div>
+              </form>
+            </div>
+          )}
+        </div>
+      </section>
+
       <div className="grid gap-6 xl:grid-cols-2">
         {/* INBOUND DISPATCHES FROM WAREHOUSE */}
         <section className="rounded-md border border-line bg-white h-fit shadow-sm">
@@ -207,7 +266,7 @@ export default function HubsPage() {
         {/* PENDING FIELD AGENT HANDOVERS */}
         <section className="rounded-md border border-line bg-white h-fit shadow-sm">
           <div className="flex items-center gap-2 border-b border-line bg-teal-50/50 px-4 py-3">
-            <UserCheck className="h-5 w-5 text-teal-700" />
+            <UserCheck className="h-5 w-5 text-teal-700" />           
             <h2 className="text-sm font-semibold text-teal-900">Pending Field Agent Handovers</h2>
           </div>
           <div className="p-4 space-y-4">
@@ -216,17 +275,22 @@ export default function HubsPage() {
             ) : (
               pendingHandovers.map((allocation) => (
                 <div key={allocation.id} className="flex items-center justify-between rounded-lg border border-teal-100 bg-teal-50/10 p-4 shadow-sm">
-                  <div>
+                  <div>   
                     <p className="font-bold text-teal-800">{agentNameById.get(allocation.agent_id) ?? "Unknown Agent"}</p>
                     <p className="font-medium text-ink mt-1">{productNameById.get(allocation.product_id) ?? "Product"}</p>
                     <p className="text-sm text-slate-600">Collects: {allocation.quantity} Units</p>
-                  </div>
+                    
+                    {/* THE FIX: Added Timestamp visibility here */}
+                    <p className="text-xs text-slate-400 mt-1 font-mono">
+                      {new Date(allocation.created_at).toLocaleString()}
+                    </p>
+                  </div>           
                   <ActionButton onClick={() => confirmHandover.mutate(allocation.id)} disabled={confirmHandover.isPending}>
                     <Truck className="h-4 w-4 mr-2" /> Confirm
                   </ActionButton>
                 </div>
               ))
-            )}
+            )}    
           </div>
         </section>
       </div>

@@ -12,10 +12,12 @@ import { api } from "@/lib/api";
 
 export default function UserManagementPage() {
   const queryClient = useQueryClient();
-  // THE FIX: Removed 'password' from local state
-  const [form, setForm] = useState({ full_name: "", email: "", role_code: "", assigned_hub_id: "" });
+  
+  const [form, setForm] = useState({ full_name: "", email: "", role_code: "", assigned_hub_id: "", assigned_region: "" });
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  const REGIONS = ["Greater Accra", "Ashanti", "Central", "Eastern", "Northern", "Western", "Volta", "Oti", "Bono", "Ahafo"];
 
   const users = useQuery({ 
     queryKey: ["users"], 
@@ -29,19 +31,18 @@ export default function UserManagementPage() {
 
   const createUser = useMutation({
     mutationFn: async () => {
-      // THE FIX: Pointed to the new secure Auth route and mapped hub_id correctly
       const payload = {
         full_name: form.full_name,
         email: form.email,
         role_code: form.role_code,
-        hub_id: form.role_code === "HUB_OFFICER" && form.assigned_hub_id ? form.assigned_hub_id : null
+        hub_id: form.role_code === "HUB_OFFICER" && form.assigned_hub_id ? form.assigned_hub_id : null,
+        assigned_region: form.role_code === "REGIONAL_MANAGER" && form.assigned_region ? form.assigned_region : null
       };
       return api.post("/auth/create-user", payload);
     },
     onSuccess: async () => {
-      setForm({ full_name: "", email: "", role_code: "", assigned_hub_id: "" });
+      setForm({ full_name: "", email: "", role_code: "", assigned_hub_id: "", assigned_region: "" });
       setError(null);
-      // THE FIX: Accurate success message
       setSuccess("User created successfully! The system has emailed them their secure login instructions.");
       await queryClient.invalidateQueries({ queryKey: ["users"] });
     },
@@ -103,11 +104,12 @@ export default function UserManagementPage() {
             <TextField label="Full Name" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} required />
             <TextField label="Email Address" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
             
-            <SelectField label="System Role" value={form.role_code} onChange={(e) => setForm({ ...form, role_code: e.target.value, assigned_hub_id: "" })} required>
+            <SelectField label="System Role" value={form.role_code} onChange={(e) => setForm({ ...form, role_code: e.target.value, assigned_hub_id: "", assigned_region: "" })} required>
               <option value="">Select Role...</option>
               <option value="MANUFACTURER">Manufacturer</option>
               <option value="WAREHOUSE_OFFICER">Warehouse Officer</option>
-              <option value="DISTRIBUTION_TEAM">Distribution Team</option>
+              <option value="DISTRIBUTION_TEAM">Distribution Team (Global)</option>
+              <option value="REGIONAL_MANAGER">Regional Manager</option>
               <option value="HUB_OFFICER">Hub Officer</option>
               <option value="MANAGER">Manager (Read-Only Global)</option>
               <option value="SUPER_ADMIN">Super Admin (IT)</option>
@@ -119,6 +121,16 @@ export default function UserManagementPage() {
                 <option value="">Select Hub...</option>
                 {(hubs.data ?? []).map((hub) => (
                   <option key={hub.id} value={hub.id}>{hub.name}</option>
+                ))}
+              </SelectField>
+            )}
+
+            {/* DYNAMIC REGION SELECTOR FOR REGIONAL MANAGERS */}
+            {form.role_code === "REGIONAL_MANAGER" && (
+              <SelectField label="Assign Region" value={form.assigned_region} onChange={(e) => setForm({ ...form, assigned_region: e.target.value })} required>
+                <option value="">Select Region...</option>
+                {REGIONS.map((region) => (
+                  <option key={region} value={region}>{region}</option>
                 ))}
               </SelectField>
             )}

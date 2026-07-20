@@ -26,6 +26,12 @@ def run_role_seeder():
             "manufacturing.read_all", "manufacturing.read", "inventory.read", "dispatches.read"
             # Managers get read-only access to all tracking!
         ],
+        "REGIONAL_MANAGER": [
+            "products.read", 
+            "inventory.read", 
+            "hubs.read", 
+            "distribution.requests.read"
+        ],
         "HUB_OFFICER": [
             "products.read", "hubs.read", "inventory.read", "dispatches.read", "hub.receipts.write"
         ],

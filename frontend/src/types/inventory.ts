@@ -112,6 +112,7 @@ export type AgentRecord = {
   id: string;
   name: string;
   phone: string | null;
+  region: string | null; // NEW
   hub_id: string;
   agent_code: string;
   is_active: boolean;

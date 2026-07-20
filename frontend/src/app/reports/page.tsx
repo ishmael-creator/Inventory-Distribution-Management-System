@@ -3,22 +3,22 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Download, FileBarChart, Calendar } from "lucide-react";
-
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionButton } from "@/components/ui/action-button";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth-store";
-import type { InventoryTransaction, ProductPage } from "@/types/inventory";
+import type { InventoryTransaction, ProductPage, HubRecord, AgentRecord, WarehouseRecord } from "@/types/inventory";
 
 export default function ReportsPage() {
   const userRole = useAuthStore((state) => state.userRole);
-  
+
   // Date filtering state
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() - 30); // Default to last 30 days
     return d.toISOString().split("T")[0];
   });
+
   const [endDate, setEndDate] = useState(() => new Date().toISOString().split("T")[0]);
 
   const transactions = useQuery({
@@ -31,7 +31,29 @@ export default function ReportsPage() {
     queryFn: async () => (await api.get<ProductPage>("/products")).data,
   });
 
+  // NEW QUERIES: Fetch Locations for Reports
+  const hubs = useQuery({ queryKey: ["hubs"], queryFn: async () => (await api.get<HubRecord[]>("/distribution/hubs")).data });
+  const agents = useQuery({ queryKey: ["agents"], queryFn: async () => (await api.get<AgentRecord[]>("/distribution/agents")).data });
+  const warehouses = useQuery({ queryKey: ["warehouses"], queryFn: async () => (await api.get<WarehouseRecord[]>("/warehouses")).data });
+
+  // Lookup Maps
   const productNameById = useMemo(() => new Map((products.data?.items ?? []).map((p) => [p.id, p.name])), [products.data?.items]);
+  const hubNameById = useMemo(() => new Map((hubs.data ?? []).map(h => [h.id, h.name])), [hubs.data]);
+  const agentNameById = useMemo(() => new Map((agents.data ?? []).map(a => [a.id, a.name])), [agents.data]);
+  const warehouseNameById = useMemo(() => new Map((warehouses.data ?? []).map(w => [w.id, w.name])), [warehouses.data]);
+
+  // THE FIX: Helper to resolve location ID to exact Name
+  const getLocationName = (type: string | null, id: string | null) => {
+    if (!type) return "---";
+    if (!id) return type;
+    
+    if (type === "WAREHOUSE") return warehouseNameById.get(id) || "Warehouse";
+    if (type === "HUB") return hubNameById.get(id) || "Hub";
+    if (type === "AGENT") return agentNameById.get(id) || "Agent";
+    if (type === "MANUFACTURER") return "Factory";
+    
+    return type;
+  };
 
   // CORE LOGIC: Filter by Date AND User Role
   const filteredData = useMemo(() => {
@@ -51,8 +73,8 @@ export default function ReportsPage() {
     } else if (userRole === "HUB_OFFICER") {
       data = data.filter(tx => tx.to_location_type === "HUB" || tx.from_location_type === "HUB");
     }
+    
     // SUPER_ADMIN, MANAGER, and DISTRIBUTION_TEAM see everything in this unified report.
-
     return data;
   }, [transactions.data, startDate, endDate, userRole]);
 
@@ -62,21 +84,22 @@ export default function ReportsPage() {
 
   const downloadCSV = () => {
     const headers = ["Date", "Transaction Type", "Product", "Quantity", "From Location", "To Location", "Notes"];
-    
+
     const rows = filteredData.map(tx => [
       new Date(tx.created_at).toLocaleString().replace(",", ""),
       tx.transaction_type === "DISPATCH" && tx.from_location_type === "AGENT" ? "AGENT SALE" : tx.transaction_type,
       productNameById.get(tx.product_id) || tx.product_id,
       tx.quantity.toString(),
-      tx.from_location_type || "N/A",
-      tx.to_location_type || "N/A",
-      `""` // wrap in quotes to prevent comma breaking
+      // THE FIX: Output exact location names to the CSV
+      getLocationName(tx.from_location_type, tx.from_location_id),
+      getLocationName(tx.to_location_type, tx.to_location_id),
+      `"${(tx.notes || "").replace(/"/g, '""')}"` // Safely export notes into the CSV
     ]);
 
     const csvContent = [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
-    
+
     const link = document.createElement("a");
     link.setAttribute("href", url);
     link.setAttribute("download", `UPE_IMS_${userRole}_Report_${startDate}_to_${endDate}.csv`);
@@ -95,23 +118,22 @@ export default function ReportsPage() {
         </div>
         <label className="text-sm font-medium text-slate-700">
           From
-          <input 
-            type="date" 
-            value={startDate} 
-            onChange={(e) => setStartDate(e.target.value)} 
+          <input
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
             className="ml-2 rounded-md border border-line px-3 py-1.5 outline-none focus:border-brand"
           />
         </label>
         <label className="text-sm font-medium text-slate-700">
           To
-          <input 
-            type="date" 
-            value={endDate} 
-            onChange={(e) => setEndDate(e.target.value)} 
+          <input
+            type="date"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
             className="ml-2 rounded-md border border-line px-3 py-1.5 outline-none focus:border-brand"
           />
         </label>
-        
         <div className="flex-1 text-right">
           <ActionButton onClick={downloadCSV} disabled={filteredData.length === 0}>
             <Download className="h-4 w-4 mr-2" /> Export to CSV
@@ -157,8 +179,9 @@ export default function ReportsPage() {
                   </td>
                   <td className="px-4 py-3 text-ink font-medium">{productNameById.get(tx.product_id) ?? tx.product_id}</td>
                   <td className="px-4 py-3 font-bold text-slate-700">{tx.quantity}</td>
-                  <td className="px-4 py-3 text-xs text-slate-500">
-                    {tx.from_location_type || "N/A"} ➔ {tx.to_location_type || "N/A"}
+                  <td className="px-4 py-3 text-xs text-slate-500 font-medium">
+                    {/* THE FIX: Render Exact Names in the UI Table */}
+                    {getLocationName(tx.from_location_type, tx.from_location_id)} ➔ {getLocationName(tx.to_location_type, tx.to_location_id)}
                   </td>
                 </tr>
               ))}
@@ -171,7 +194,6 @@ export default function ReportsPage() {
           </table>
         </div>
       </section>
-
     </AppShell>
   );
 }

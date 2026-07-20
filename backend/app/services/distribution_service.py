@@ -1,14 +1,14 @@
 import uuid
 from typing import Optional
-from fastapi import HTTPException
+from fastapi import HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, or_
 
 from app.models.inventory import AllocationRequest, DispatchOrder, InventoryBalance, InventoryTransaction, AgentAllocation, AgentSale
 from app.models.user import Hub, User, Role, Agent
 from app.models.product import Product
 from app.core.enums import RoleCode
-from app.schemas.distribution import HubCreate, AllocationRequestCreate, AllocationRequestReview, HubReceiptCreate, AgentCreate, AgentAllocationCreate, AgentSaleCreate
+from app.schemas.distribution import AgentReturnCreate, HubCreate, AllocationRequestCreate, AllocationRequestReview, HubReceiptCreate, AgentCreate, AgentAllocationCreate, AgentSaleCreate
 from app.utils.push_notifier import create_system_notification
 
 
@@ -16,22 +16,22 @@ class DistributionService:
     def __init__(self, db: Session):
         self.db = db
 
-    def _notify_role(self, role_code: str, title: str, message: str, ref_id: str, ref_type: str):
-        """Helper to broadcast a notification AND Web Push to all active users of a specific role."""
+    def _notify_role(self, role_code: str, title: str, message: str, ref_id: str, ref_type: str, background_tasks: BackgroundTasks = None):
         users = self.db.scalars(
             select(User).join(Role).where(Role.code == role_code, User.is_active == True)
         ).all()
-        
         for user in users:
-            create_system_notification(
-                db=self.db,
-                user_id=user.id,
-                title=title,
-                message=message,
-                reference_id=ref_id,
-                reference_type=ref_type,
-                url="/distribution" if role_code == RoleCode.DISTRIBUTION_TEAM else "/"
-            )
+            if background_tasks:
+                background_tasks.add_task(
+                    create_system_notification,
+                    db=self.db, user_id=user.id, title=title, message=message, reference_id=ref_id, reference_type=ref_type,
+                    url="/distribution" if role_code == RoleCode.DISTRIBUTION_TEAM else "/"
+                )
+            else:
+                create_system_notification(
+                    db=self.db, user_id=user.id, title=title, message=message, reference_id=ref_id, reference_type=ref_type,
+                    url="/distribution" if role_code == RoleCode.DISTRIBUTION_TEAM else "/"
+                )
 
     def create_hub(self, payload: HubCreate, user_id: uuid.UUID):
         hub = Hub(
@@ -62,7 +62,7 @@ class DistributionService:
         self.db.commit()
         return {"status": "success", "message": "Hub deleted successfully"}
 
-    def create_request(self, payload: AllocationRequestCreate, user_id: uuid.UUID):
+    def create_request(self, payload: AllocationRequestCreate, user_id: uuid.UUID, background_tasks: BackgroundTasks = None):
         req = AllocationRequest(
             id=uuid.uuid4(),
             hub_id=payload.hub_id,
@@ -84,14 +84,15 @@ class DistributionService:
             "New Allocation Request",
             f"The Distribution Team has requested {req.quantity} units of {product_name} for {hub_name}.",
             str(req.id),
-            "allocation_request"
+            "allocation_request",
+            background_tasks=background_tasks
         )
 
         self.db.commit()
         self.db.refresh(req)
         return req
 
-    def approve_request(self, request_id: uuid.UUID, payload: AllocationRequestReview, user_id: uuid.UUID):
+    def approve_request(self, request_id: uuid.UUID, payload: AllocationRequestReview, user_id: uuid.UUID, background_tasks: BackgroundTasks = None):
         req = self.db.query(AllocationRequest).filter_by(id=request_id).first()
         if not req: raise HTTPException(404, "Request not found")
 
@@ -109,14 +110,15 @@ class DistributionService:
             "Request Approved",
             f"The Warehouse has approved your allocation request for {approved_qty} units of {product_name}.",
             str(req.id),
-            "allocation_request"
+            "allocation_request",
+            background_tasks=background_tasks
         )
 
         self.db.commit()
         self.db.refresh(req)
         return req
 
-    def reject_request(self, request_id: uuid.UUID, payload: AllocationRequestReview, user_id: uuid.UUID):
+    def reject_request(self, request_id: uuid.UUID, payload: AllocationRequestReview, user_id: uuid.UUID, background_tasks: BackgroundTasks = None):
         req = self.db.query(AllocationRequest).filter_by(id=request_id).first()
         if not req: raise HTTPException(404, "Request not found")
 
@@ -132,14 +134,15 @@ class DistributionService:
             "Request Rejected",
             f"The Warehouse has rejected your allocation request for {req.quantity} units of {product_name}. Reason: {req.notes}",
             str(req.id),
-            "allocation_request"
+            "allocation_request",
+            background_tasks=background_tasks
         )
 
         self.db.commit()
         self.db.refresh(req)
         return req
 
-    def dispatch_request(self, request_id: uuid.UUID, user_id: uuid.UUID):
+    def dispatch_request(self, request_id: uuid.UUID, user_id: uuid.UUID, background_tasks: BackgroundTasks = None):
         req = self.db.query(AllocationRequest).filter_by(id=request_id).first()
         if not req: raise HTTPException(404, "Request not found")
         if req.status != "APPROVED": raise HTTPException(400, "Request must be approved before dispatch")
@@ -195,21 +198,34 @@ class DistributionService:
             "Stock Dispatched",
             f"{qty} units of {product_name} have been dispatched from the Central Warehouse and are en route to {hub_name}.",
             str(dispatch.id),
-            "dispatch_order"
+            "dispatch_order",
+            background_tasks=background_tasks
         )
 
         # 2. Targeted Push exclusively to Officers assigned to this specific Hub
         hub_officers = self.db.scalars(select(User).where(User.assigned_hub_id == req.hub_id, User.is_active == True)).all()
         for officer in hub_officers:
-            create_system_notification(
-                db=self.db,
-                user_id=officer.id,
-                title="Incoming Dispatch",
-                message=f"Heads up: {qty} units of {product_name} have just been dispatched from the Central Warehouse and are en route to your location ({hub_name}).",
-                reference_id=str(dispatch.id),
-                reference_type="dispatch_order",
-                url="/hubs"
-            )
+            if background_tasks:
+                background_tasks.add_task(
+                    create_system_notification,
+                    db=self.db,
+                    user_id=officer.id,
+                    title="Incoming Dispatch",
+                    message=f"Heads up: {qty} units of {product_name} have just been dispatched from the Central Warehouse and are en route to your location ({hub_name}).",
+                    reference_id=str(dispatch.id),
+                    reference_type="dispatch_order",
+                    url="/hubs"
+                )
+            else:
+                create_system_notification(
+                    db=self.db,
+                    user_id=officer.id,
+                    title="Incoming Dispatch",
+                    message=f"Heads up: {qty} units of {product_name} have just been dispatched from the Central Warehouse and are en route to your location ({hub_name}).",
+                    reference_id=str(dispatch.id),
+                    reference_type="dispatch_order",
+                    url="/hubs"
+                )
 
         self.db.commit()
         self.db.refresh(dispatch)
@@ -305,22 +321,48 @@ class DistributionService:
         
         # 3. Create the actual Agent Profile
         agent = Agent(
-            id=uuid.uuid4(), 
-            name=payload.name, 
+            id=uuid.uuid4(),
+            name=payload.name,
             hub_id=payload.hub_id,
             agent_code=agent_code,
-            user_id=shadow_user.id, # Link to their own unique shadow ID, not the Admin's!
-            territory=payload.phone
+            user_id=shadow_user.id,
+            region=payload.region,
+            phone=payload.phone,
+            territory=None
         )
         self.db.add(agent)
         self.db.commit()
         self.db.refresh(agent)
         return agent
     
-    def get_agents(self, hub_id: Optional[uuid.UUID] = None):
-        # Enforce that only active agents are retrieved
+    def get_agents(self, hub_id: Optional[uuid.UUID] = None, current_user: User = None):
         query = self.db.query(Agent).filter(Agent.is_active == True)
         if hub_id: query = query.filter(Agent.hub_id == hub_id)
+
+        # THE CLAIMED VS UNCLAIMED LOGIC
+        if current_user and current_user.role.code == RoleCode.REGIONAL_MANAGER:
+            my_region = current_user.assigned_region
+            
+            # 1. Find all active regional managers and their regions (excluding myself)
+            other_rms = self.db.query(User).join(Role).filter(
+                Role.code == RoleCode.REGIONAL_MANAGER,
+                User.is_active == True,
+                User.id != current_user.id,
+                User.assigned_region.isnot(None)
+            ).all()
+            
+            claimed_regions = [rm.assigned_region for rm in other_rms]
+
+            # 2. Filter: Show agents in MY region OR agents in UNCLAIMED regions
+            if claimed_regions:
+                query = query.filter(
+                    or_(
+                        Agent.region == my_region,
+                        ~Agent.region.in_(claimed_regions),
+                        Agent.region.is_(None)
+                    )
+                )
+
         return query.all()
     
     def delete_agent(self, agent_id: uuid.UUID, user_id: uuid.UUID):
@@ -345,13 +387,16 @@ class DistributionService:
             query = query.join(Agent).filter(Agent.hub_id == hub_id)
         return query.order_by(AgentAllocation.created_at.desc()).all()
 
-    def allocate_to_agent(self, payload: AgentAllocationCreate, user_id: uuid.UUID):
+    def allocate_to_agent(self, payload: AgentAllocationCreate, user_id: uuid.UUID, background_tasks: BackgroundTasks = None):
         agent = self.db.query(Agent).filter_by(id=payload.agent_id).first()
         if not agent: raise HTTPException(404, "Agent not found")
 
-        # 🚨 THE FIX: Fail Fast if the Hub doesn't have the physical stock!
+        # Dynamically reassign the roaming agent to the target pickup hub
+        agent.hub_id = payload.hub_id
+
+        # Fail Fast if the target Hub doesn't have the physical stock
         hub_bal = self.db.query(InventoryBalance).filter_by(
-            location_id=agent.hub_id, 
+            location_id=payload.hub_id,
             product_id=payload.product_id
         ).first()
         
@@ -359,8 +404,8 @@ class DistributionService:
         if available_qty < payload.quantity:
             product = self.db.get(Product, payload.product_id)
             raise HTTPException(
-                400, 
-                f"Cannot allocate. The Hub only has {available_qty} units of {product.name if product else 'this product'} available."
+                400,
+                f"Cannot allocate. The requested Hub only has {available_qty} units of {product.name if product else 'this product'} available."
             )
 
         # If they have the stock, proceed normally
@@ -371,20 +416,32 @@ class DistributionService:
         self.db.add(allocation)
         
         product = self.db.get(Product, payload.product_id)
-        
-        # Notify exclusively the officers assigned to this agent's hub
-        hub_officers = self.db.scalars(select(User).where(User.assigned_hub_id == agent.hub_id, User.is_active == True)).all()
+
+        # Notify exclusively the officers assigned to the target pickup hub
+        hub_officers = self.db.scalars(select(User).where(User.assigned_hub_id == payload.hub_id, User.is_active == True)).all()
         for officer in hub_officers:
-            create_system_notification(
-                db=self.db, 
-                user_id=officer.id,
-                title="New Agent Allocation",
-                message=f"Distribution has allocated {payload.quantity} units of {product.name if product else 'Product'} to Agent {agent.name}.",
-                reference_id=str(allocation.id), 
-                reference_type="agent_allocation", 
-                url="/hubs"
-            )
-            
+            if background_tasks:
+                background_tasks.add_task(
+                    create_system_notification,
+                    db=self.db,
+                    user_id=officer.id,
+                    title="New Agent Allocation",
+                    message=f"Distribution has allocated {payload.quantity} units of {product.name if product else 'Product'} to Agent {agent.name} for pickup at your Hub.",
+                    reference_id=str(allocation.id),
+                    reference_type="agent_allocation",
+                    url="/hubs"
+                )
+            else:
+                create_system_notification(
+                    db=self.db,
+                    user_id=officer.id,
+                    title="New Agent Allocation",
+                    message=f"Distribution has allocated {payload.quantity} units of {product.name if product else 'Product'} to Agent {agent.name} for pickup at your Hub.",
+                    reference_id=str(allocation.id),
+                    reference_type="agent_allocation",
+                    url="/hubs"
+                )
+
         self.db.commit()
         self.db.refresh(allocation)
         return allocation
@@ -441,32 +498,39 @@ class DistributionService:
         self.db.commit()
         return sale
 
+    def return_agent_stock(self, payload: AgentReturnCreate, user_id: uuid.UUID):
+        # 1. Global Walk-In Search: Find agent by their unique CODE
+        agent = self.db.query(Agent).filter(Agent.agent_code == payload.agent_code).first()
+        if not agent: raise HTTPException(404, "Agent not found. Please verify the Agent Code.")
 
-def return_agent_stock(self, payload: AgentSaleCreate, user_id: uuid.UUID):
-        # We reuse AgentSaleCreate schema since it requires the exact same fields: agent_id, product_id, quantity
-        agent = self.db.query(Agent).filter_by(id=payload.agent_id).first()
-        if not agent: raise HTTPException(404, "Agent not found")
+        # 2. Deduct from Agent's Backpack
+        agent_bal = self.db.query(InventoryBalance).filter_by(
+            location_type="AGENT", location_id=agent.id, product_id=payload.product_id
+        ).with_for_update().first()
         
-        # 1. Deduct from Agent's Backpack
-        agent_bal = self.db.query(InventoryBalance).filter_by(location_id=agent.id, product_id=payload.product_id).with_for_update().first()
-        if not agent_bal or agent_bal.quantity < payload.quantity: raise HTTPException(400, "Agent does not have enough stock to return.")
+        if not agent_bal or agent_bal.quantity < payload.quantity: 
+            raise HTTPException(400, f"Agent {agent.name} does not have enough of this stock in their backpack to return.")
+        
         agent_bal.quantity -= payload.quantity
+
+        # 3. Add back to the TARGET Hub (Where they walked in)
+        hub_bal = self.db.query(InventoryBalance).filter_by(
+            location_type="HUB", location_id=payload.target_hub_id, product_id=payload.product_id
+        ).first()
         
-        # 2. Add back to the Hub
-        hub_bal = self.db.query(InventoryBalance).filter_by(location_id=agent.hub_id, product_id=payload.product_id).first()
         if not hub_bal:
-            hub_bal = InventoryBalance(id=uuid.uuid4(), product_id=payload.product_id, location_type="HUB", location_id=agent.hub_id, quantity=payload.quantity)
+            hub_bal = InventoryBalance(id=uuid.uuid4(), product_id=payload.product_id, location_type="HUB", location_id=payload.target_hub_id, quantity=payload.quantity)
             self.db.add(hub_bal)
         else:
             hub_bal.quantity += payload.quantity
-            
-        # 3. Log the Return Transaction
+
+        # 4. Log the Return Transaction
         tx = InventoryTransaction(
             id=uuid.uuid4(),
             product_id=payload.product_id, transaction_type="TRANSFER",
             from_location_type="AGENT", from_location_id=agent.id,
-            to_location_type="HUB", to_location_id=agent.hub_id,
-            quantity=payload.quantity, created_by=user_id, notes=f"Stock returned to Hub by {agent.name}"
+            to_location_type="HUB", to_location_id=payload.target_hub_id,
+            quantity=payload.quantity, created_by=user_id, notes=f"Walk-in return processed for {agent.name}"
         )
         self.db.add(tx)
         self.db.commit()

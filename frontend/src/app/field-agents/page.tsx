@@ -12,10 +12,10 @@ import type { HubRecord, ProductPage, AgentRecord } from "@/types/inventory";
 export default function FieldAgentsPage() {
   const queryClient = useQueryClient();
 
-  const [newAgentForm, setNewAgentForm] = useState({ name: "", phone: "", hub_id: "" });
-  const [agentAllocationForm, setAgentAllocationForm] = useState({ agent_id: "", product_id: "", quantity: "1" });
+  const [newAgentForm, setNewAgentForm] = useState({ name: "", phone: "", region: "" });
+  const [agentAllocationForm, setAgentAllocationForm] = useState({ agent_id: "", hub_id: "", product_id: "", quantity: "1" });
   const [agentSaleForm, setAgentSaleForm] = useState({ agent_id: "", product_id: "", quantity: "1" });
-  
+  const REGIONS = ["Greater Accra", "Ashanti", "Central", "Eastern", "Northern", "Western", "Volta", "Oti", "Bono", "Ahafo"];
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -29,11 +29,11 @@ export default function FieldAgentsPage() {
   // Mutations
   const createAgent = useMutation({
     mutationFn: async () => api.post("/distribution/agents", newAgentForm),
-    onSuccess: async () => { 
-      setNewAgentForm({ name: "", phone: "", hub_id: "" }); 
-      setError(null); 
-      setSuccess("Agent successfully registered!"); 
-      await queryClient.invalidateQueries({ queryKey: ["agents"] }); 
+    onSuccess: async () => {
+      setNewAgentForm({ name: "", phone: "" });
+      setError(null);
+      setSuccess("Agent successfully registered!");
+      await queryClient.invalidateQueries({ queryKey: ["agents"] });
       setTimeout(() => setSuccess(null), 4000);
     },
     onError: (err: any) => setError(err.response?.data?.detail || "Failed to register agent.")
@@ -41,12 +41,15 @@ export default function FieldAgentsPage() {
 
   const allocateStockToAgent = useMutation({
     mutationFn: async () => api.post("/distribution/agents/allocate", {
-      agent_id: agentAllocationForm.agent_id, product_id: agentAllocationForm.product_id, quantity: Number(agentAllocationForm.quantity)
+      agent_id: agentAllocationForm.agent_id, 
+      hub_id: agentAllocationForm.hub_id, // THE FIX: Send the pickup hub
+      product_id: agentAllocationForm.product_id, 
+      quantity: Number(agentAllocationForm.quantity)
     }),
-    onSuccess: async () => { 
-      setAgentAllocationForm({ agent_id: "", product_id: "", quantity: "1" }); 
-      setError(null); 
-      setSuccess("Allocation sent to Hub Officer for handover!"); 
+    onSuccess: async () => {
+      setAgentAllocationForm({ agent_id: "", hub_id: "", product_id: "", quantity: "1" });
+      setError(null);
+      setSuccess("Allocation sent to Hub Officer for handover!");
       setTimeout(() => setSuccess(null), 4000);
     },
     onError: (err: any) => setError(err.response?.data?.detail || "Failed to allocate stock.")
@@ -88,16 +91,18 @@ export default function FieldAgentsPage() {
         <section className="rounded-md border border-line bg-white shadow-sm overflow-hidden">
           <div className="flex items-center gap-2 border-b border-line bg-slate-50 px-6 py-4">
             <UserPlus className="h-5 w-5 text-brand" />
-            <h2 className="text-lg font-semibold text-ink">1. Register New Agent</h2>
+            <h2 className="text-lg font-semibold text-ink">1. Register New Roaming Agent</h2>
           </div>
           <form onSubmit={(e) => { e.preventDefault(); createAgent.mutate(); }} className="p-6">
             <div className="grid gap-4 md:grid-cols-4 items-end">
               <TextField label="Agent Name" value={newAgentForm.name} onChange={(e) => setNewAgentForm({ ...newAgentForm, name: e.target.value })} required />
               <TextField label="Phone (Optional)" value={newAgentForm.phone} onChange={(e) => setNewAgentForm({ ...newAgentForm, phone: e.target.value })} />
-              <SelectField label="Assigned Hub" value={newAgentForm.hub_id} onChange={(e) => setNewAgentForm({ ...newAgentForm, hub_id: e.target.value })} required>
-                <option value="">Select hub</option>
-                {(hubs.data ?? []).map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+              
+              <SelectField label="Operating Region" value={newAgentForm.region} onChange={(e) => setNewAgentForm({ ...newAgentForm, region: e.target.value })} required>
+                <option value="">Select region...</option>
+                {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
               </SelectField>
+
               <ActionButton disabled={createAgent.isPending} type="submit" className="w-full">Register Agent</ActionButton>
             </div>
           </form>
@@ -107,20 +112,30 @@ export default function FieldAgentsPage() {
         <section className="rounded-md border border-line bg-white shadow-sm overflow-hidden">
           <div className="flex items-center gap-2 border-b border-line bg-indigo-50/50 px-6 py-4">
             <Store className="h-5 w-5 text-indigo-600" />
-            <h2 className="text-lg font-semibold text-ink">2. Allocate Stock to Agent </h2>
+            <h2 className="text-lg font-semibold text-ink">2. Allocate Stock for Pickup</h2>
           </div>
           <form onSubmit={(e) => { e.preventDefault(); allocateStockToAgent.mutate(); }} className="p-6">
-            <div className="grid gap-4 md:grid-cols-4 items-end">
+            <div className="grid gap-4 md:grid-cols-5 items-end">
               <SelectField label="Select Agent" value={agentAllocationForm.agent_id} onChange={(e) => setAgentAllocationForm({ ...agentAllocationForm, agent_id: e.target.value })} required>
-                <option value="">Select agent</option>
-                {(agents.data ?? []).map((a) => <option key={a.id} value={a.id}>{a.name} ({hubNameById.get(a.hub_id)})</option>)}
+                <option value="">Select agent...</option>
+                {/* THE FIX: Remove the hardcoded hub assignment from the label */}
+                {(agents.data ?? []).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               </SelectField>
+
+              {/* THE FIX: New Target Hub Dropdown */}
+              <SelectField label="Pickup Hub" value={agentAllocationForm.hub_id} onChange={(e) => setAgentAllocationForm({ ...agentAllocationForm, hub_id: e.target.value })} required>
+                <option value="">Select pickup hub...</option>
+                {(hubs.data ?? []).map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+              </SelectField>
+
               <SelectField label="Product" value={agentAllocationForm.product_id} onChange={(e) => setAgentAllocationForm({ ...agentAllocationForm, product_id: e.target.value })} required>
-                <option value="">Select product</option>
+                <option value="">Select product...</option>
                 {(products.data?.items ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </SelectField>
+
               <TextField label="Quantity" min={1} type="number" value={agentAllocationForm.quantity} onChange={(e) => setAgentAllocationForm({ ...agentAllocationForm, quantity: e.target.value })} required />
-              <ActionButton disabled={allocateStockToAgent.isPending} type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700">Allocate to Agent</ActionButton>
+              
+              <ActionButton disabled={allocateStockToAgent.isPending} type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700">Dispatch</ActionButton>
             </div>
           </form>
         </section>
@@ -172,6 +187,10 @@ export default function FieldAgentsPage() {
                       <span className="font-mono text-xs font-bold text-brand bg-teal-50 px-2 py-1 rounded">
                         {agent.agent_code}
                       </span>
+                    </td>
+                    {/* NEW REGION CELL */}
+                    <td className="px-4 py-3">
+                       <span className="bg-indigo-50 text-indigo-700 px-2 py-1 rounded text-xs font-semibold">{agent.region || "N/A"}</span>
                     </td>
                     <td className="px-4 py-3 text-slate-600">{hubNameById.get(agent.hub_id) ?? "Unknown"}</td>
                     <td className="px-4 py-3 text-slate-600">{(agent as any).territory || agent.phone || "N/A"}</td>

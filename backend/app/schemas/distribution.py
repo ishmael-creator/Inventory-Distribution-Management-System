@@ -87,11 +87,12 @@ class HubUpdate(BaseModel):
 class AgentCreate(BaseModel):
     name: str
     phone: Optional[str] = None
-    hub_id: uuid.UUID
-
+    region: str  # NEW!
+    hub_id: Optional[uuid.UUID] = None
 
 class AgentAllocationCreate(BaseModel):
     agent_id: uuid.UUID
+    hub_id: uuid.UUID  # THE FIX: Tell the backend which hub the agent is going to!
     product_id: uuid.UUID
     quantity: int
 
@@ -100,3 +101,10 @@ class AgentSaleCreate(BaseModel):
     agent_id: uuid.UUID
     product_id: uuid.UUID
     quantity: int
+
+
+class AgentReturnCreate(BaseModel):
+    agent_code: str
+    product_id: uuid.UUID
+    quantity: int
+    target_hub_id: uuid.UUID

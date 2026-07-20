@@ -3,15 +3,14 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { History, Boxes, Calendar } from "lucide-react";
-
 import { AppShell } from "@/components/layout/app-shell";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth-store";
-import type { InventoryBalance, InventoryTransaction, ProductPage } from "@/types/inventory";
+import type { InventoryBalance, InventoryTransaction, ProductPage, HubRecord, AgentRecord, WarehouseRecord } from "@/types/inventory";
 
 export default function InventoryLedgerPage() {
   const userRole = useAuthStore((state) => state.userRole);
-  
+
   // Define who gets to see the global stock balances
   const isGlobalRole = ["SUPER_ADMIN", "MANAGER", "DISTRIBUTION_TEAM"].includes(userRole || "");
 
@@ -20,8 +19,10 @@ export default function InventoryLedgerPage() {
     d.setDate(d.getDate() - 7); // Default to last 7 days
     return d.toISOString().split("T")[0];
   });
+
   const [endDate, setEndDate] = useState(() => new Date().toISOString().split("T")[0]);
 
+  // Data Queries
   const products = useQuery({
     queryKey: ["products"],
     queryFn: async () => (await api.get<ProductPage>("/products")).data,
@@ -30,7 +31,7 @@ export default function InventoryLedgerPage() {
   const balances = useQuery({
     queryKey: ["balances"],
     queryFn: async () => (await api.get<InventoryBalance[]>("/inventory/balances")).data,
-    enabled: isGlobalRole, // Only fetch balances if the user is a global role to save bandwidth
+    enabled: isGlobalRole, 
   });
 
   const transactions = useQuery({
@@ -38,7 +39,29 @@ export default function InventoryLedgerPage() {
     queryFn: async () => (await api.get<InventoryTransaction[]>("/inventory/transactions")).data,
   });
 
+  // NEW QUERIES: Fetch Locations so we can map IDs to exact Names
+  const hubs = useQuery({ queryKey: ["hubs"], queryFn: async () => (await api.get<HubRecord[]>("/distribution/hubs")).data });
+  const agents = useQuery({ queryKey: ["agents"], queryFn: async () => (await api.get<AgentRecord[]>("/distribution/agents")).data });
+  const warehouses = useQuery({ queryKey: ["warehouses"], queryFn: async () => (await api.get<WarehouseRecord[]>("/warehouses")).data });
+
+  // Lookup Maps
   const productNameById = useMemo(() => new Map((products.data?.items ?? []).map((p) => [p.id, p.name])), [products.data?.items]);
+  const hubNameById = useMemo(() => new Map((hubs.data ?? []).map(h => [h.id, h.name])), [hubs.data]);
+  const agentNameById = useMemo(() => new Map((agents.data ?? []).map(a => [a.id, a.name])), [agents.data]);
+  const warehouseNameById = useMemo(() => new Map((warehouses.data ?? []).map(w => [w.id, w.name])), [warehouses.data]);
+
+  // THE FIX: Helper to resolve location ID to Name
+  const getLocationName = (type: string | null, id: string | null) => {
+    if (!type) return "---";
+    if (!id) return type; // Fallback if no ID is attached
+    
+    if (type === "WAREHOUSE") return warehouseNameById.get(id) || "Warehouse";
+    if (type === "HUB") return hubNameById.get(id) || "Hub";
+    if (type === "AGENT") return agentNameById.get(id) || "Agent";
+    if (type === "MANUFACTURER") return "Factory";
+    
+    return type;
+  };
 
   // AUTOMATIC & PERMANENT LOG FILTERING
   const filteredTransactions = useMemo(() => {
@@ -58,7 +81,7 @@ export default function InventoryLedgerPage() {
     } else if (userRole === "HUB_OFFICER") {
       data = data.filter(tx => tx.to_location_type === "HUB" || tx.from_location_type === "HUB");
     }
-
+    
     return data;
   }, [transactions.data, startDate, endDate, userRole]);
 
@@ -72,25 +95,25 @@ export default function InventoryLedgerPage() {
         </div>
         <label className="text-sm font-medium text-slate-700">
           From
-          <input 
-            type="date" 
-            value={startDate} 
-            onChange={(e) => setStartDate(e.target.value)} 
+          <input
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
             className="ml-2 rounded-md border border-line px-3 py-1.5 outline-none focus:border-brand"
           />
         </label>
         <label className="text-sm font-medium text-slate-700">
           To
-          <input 
-            type="date" 
-            value={endDate} 
-            onChange={(e) => setEndDate(e.target.value)} 
+          <input
+            type="date"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
             className="ml-2 rounded-md border border-line px-3 py-1.5 outline-none focus:border-brand"
           />
         </label>
       </section>
 
-      {/* GLOBAL STOCK BALANCES (ONLY VISIBLE TO SUPER_ADMIN, MANAGER, DISTRIBUTION) */}
+      {/* GLOBAL STOCK BALANCES */}
       {isGlobalRole && (
         <section className="mb-8 rounded-md border border-line bg-white shadow-sm">
           <div className="flex items-center gap-2 border-b border-line bg-slate-50 px-4 py-3">
@@ -112,9 +135,14 @@ export default function InventoryLedgerPage() {
               <tbody className="divide-y divide-line">
                 {(balances.data ?? []).map((balance) => {
                   const available = balance.quantity - (balance.reserved_quantity || 0);
+                  // Grab the exact location name for the balance sheet too!
+                  const locName = getLocationName(balance.location_type, balance.location_id);
+                  
                   return (
                     <tr key={balance.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-semibold text-slate-700">{balance.location_type}</td>
+                      <td className="px-4 py-3 font-semibold text-slate-700">
+                        {balance.location_type} <span className="text-slate-400 font-normal ml-1">({locName})</span>
+                      </td>
                       <td className="px-4 py-3 text-slate-600">{productNameById.get(balance.product_id) ?? balance.product_id}</td>
                       <td className="px-4 py-3">{balance.quantity}</td>
                       <td className="px-4 py-3 text-amber-600">{balance.reserved_quantity || 0}</td>
@@ -132,7 +160,7 @@ export default function InventoryLedgerPage() {
         </section>
       )}
 
-      {/* ISOLATED TRANSACTION LOGS (VISIBLE TO EVERYONE, BUT FILTERED BY ROLE) */}
+      {/* ISOLATED TRANSACTION LOGS */}
       <section className="rounded-md border border-line bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-line bg-slate-50 px-4 py-3">
           <div className="flex items-center gap-2">
@@ -168,12 +196,15 @@ export default function InventoryLedgerPage() {
                   </td>
                   <td className="px-4 py-3 font-medium text-ink">{productNameById.get(tx.product_id) ?? tx.product_id}</td>
                   <td className="px-4 py-3 font-bold text-slate-700">{tx.quantity}</td>
-                  <td className="px-4 py-3 text-xs font-mono text-slate-500">
-                    {tx.from_location_type ? tx.from_location_type.substring(0, 3) : "---"} ➔ {tx.to_location_type ? tx.to_location_type.substring(0, 3) : "---"}
+                  
+                  {/* THE FIX: Render Exact Location Names instead of vague types */}
+                  <td className="px-4 py-3 text-xs font-medium text-slate-700">
+                    {getLocationName(tx.from_location_type, tx.from_location_id)} ➔ {getLocationName(tx.to_location_type, tx.to_location_id)}
                   </td>
+                  
                   <td className="px-4 py-3 text-slate-500 italic max-w-xs truncate">
-                      -
-                </td>
+                    {tx.notes || "-"}
+                  </td>
                 </tr>
               ))}
               {filteredTransactions.length === 0 && (
@@ -187,7 +218,6 @@ export default function InventoryLedgerPage() {
           </table>
         </div>
       </section>
-
     </AppShell>
   );
 }

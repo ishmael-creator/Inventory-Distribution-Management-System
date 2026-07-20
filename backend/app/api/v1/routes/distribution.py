@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -19,7 +19,8 @@ from app.schemas.distribution import (
     HubUpdate,
      AgentCreate,
     AgentAllocationCreate,
-    AgentSaleCreate, # <-- Added this import! (Make sure you put the schema in this file)
+    AgentSaleCreate,# <-- Added this import! (Make sure you put the schema in this file)
+    AgentReturnCreate,  
 )
 from app.services.distribution_service import DistributionService
 
@@ -60,20 +61,22 @@ def list_requests(
 @router.post("/requests", response_model=AllocationRequestRead, status_code=201)
 def create_request(
     payload: AllocationRequestCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(require_permissions("distribution.requests.write")),
     db: Session = Depends(get_db),
 ) -> AllocationRequest:
-    return DistributionService(db).create_request(payload, current_user.id)
+    return DistributionService(db).create_request(payload, current_user.id, background_tasks)
 
 
 @router.post("/requests/{request_id}/approve", response_model=AllocationRequestRead)
 def approve_request(
     request_id: uuid.UUID,
     payload: AllocationRequestReview,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(require_permissions("distribution.requests.review")),
     db: Session = Depends(get_db),
 ) -> AllocationRequest:
-    return DistributionService(db).approve_request(request_id, payload, current_user.id)
+    return DistributionService(db).approve_request(request_id, payload, current_user.id, background_tasks)
 
 
 @router.post("/requests/{request_id}/reject", response_model=AllocationRequestRead)
@@ -97,10 +100,11 @@ def list_dispatches(
 @router.post("/requests/{request_id}/dispatch", response_model=DispatchOrderRead)
 def dispatch_request(
     request_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(require_permissions("dispatches.write")),
     db: Session = Depends(get_db),
 ) -> DispatchOrder:
-    return DistributionService(db).dispatch_request(request_id, current_user.id)
+    return DistributionService(db).dispatch_request(request_id, current_user.id, background_tasks)
 
 
 @router.post("/receipts", response_model=DispatchOrderRead)
@@ -148,25 +152,27 @@ def assign_hub_manager(
 
 @router.post("/agents")
 def create_agent(payload: AgentCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER"]: raise HTTPException(403)
+    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER", "REGIONAL_MANAGER"]: raise HTTPException(403)
     # THE FIX: We are now passing current_user.id
     return DistributionService(db).create_agent(payload, current_user.id)
 
 @router.get("/agents")
 def list_agents(hub_id: Optional[uuid.UUID] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER", "HUB_OFFICER"]: 
+    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER", "HUB_OFFICER", "REGIONAL_MANAGER"]: 
         raise HTTPException(403, "Not authorized to view agents.")
         
-    # 🔒 STRICT ISOLATION: Force Hub Officers to only see their own agents
+    # STRICT ISOLATION: Force Hub Officers to only see their own agents
     if current_user.role.code == "HUB_OFFICER" and current_user.assigned_hub_id:
         hub_id = current_user.assigned_hub_id
+
+    # THE FIX: Pass current_user to the service to trigger the region logic
+    return DistributionService(db).get_agents(hub_id, current_user)
         
-    return DistributionService(db).get_agents(hub_id)
 
 @router.post("/agents/allocate")
-def allocate_stock(payload: AgentAllocationCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER"]: raise HTTPException(403)
-    return DistributionService(db).allocate_to_agent(payload, current_user.id)
+def allocate_stock(payload: AgentAllocationCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER", "REGIONAL_MANAGER"]: raise HTTPException(403)
+    return DistributionService(db).allocate_to_agent(payload, current_user.id, background_tasks)
 
 @router.post("/agents/allocations/{allocation_id}/confirm")
 def confirm_handover(allocation_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -175,18 +181,18 @@ def confirm_handover(allocation_id: uuid.UUID, db: Session = Depends(get_db), cu
 
 @router.post("/agents/sales")
 def record_sale(payload: AgentSaleCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER"]: raise HTTPException(403)
+    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER", "REGIONAL_MANAGER"]: raise HTTPException(403)
     return DistributionService(db).record_agent_sale(payload, current_user.id)
 
 
 @router.get("/agents/allocations")
 def list_allocations(hub_id: Optional[uuid.UUID] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if current_user.role.code not in ["HUB_OFFICER", "DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER"]: raise HTTPException(403)
+    if current_user.role.code not in ["HUB_OFFICER", "DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER", "REGIONAL_MANAGER"]: raise HTTPException(403)
     return DistributionService(db).get_agent_allocations(hub_id)
 
 @router.post("/agents/return")
-def return_stock(payload: AgentSaleCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER", "HUB_OFFICER"]: raise HTTPException(403)
+def return_stock(payload: AgentReturnCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER", "HUB_OFFICER", "REGIONAL_MANAGER"]: raise HTTPException(403)
     return DistributionService(db).return_agent_stock(payload, current_user.id)
 
 @router.delete("/agents/{agent_id}")

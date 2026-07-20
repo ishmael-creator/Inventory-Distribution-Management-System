@@ -36,6 +36,8 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     
     # Link Hub Officers to a specific Hub
     assigned_hub_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("hubs.id"), nullable=True)
+    # <-- NEW: Link Regional Managers to a specific territory
+    assigned_region: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     role: Mapped["Role"] = relationship("Role", lazy="joined")
 
@@ -61,14 +63,13 @@ class Hub(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class Agent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "agents"
-
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), unique=True)
     hub_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("hubs.id"))
-    
-    name: Mapped[str] = mapped_column(String(150), index=True) 
-    
+    name: Mapped[str] = mapped_column(String(150), index=True)
     agent_code: Mapped[str] = mapped_column(String(80), unique=True)
-    territory: Mapped[str | None] = mapped_column(String(160))
+    territory: Mapped[str | None] = mapped_column(String(160)) 
+    region: Mapped[str | None] = mapped_column(String(100)) # NEW!
+    phone: Mapped[str | None] = mapped_column(String(50))   # NEW!
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 

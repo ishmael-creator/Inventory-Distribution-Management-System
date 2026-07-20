@@ -1,5 +1,5 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.utils.push_notifier import create_system_notification
@@ -47,6 +47,7 @@ def release_batch(
 @router.post("/batches/{batch_id}/receive")
 def receive_batch_at_warehouse(
     batch_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
@@ -90,11 +91,11 @@ def receive_batch_at_warehouse(
     db.add(tx)
 
     # =======================================================
-    # THE FIX: FIRE NOTIFICATIONS & OS PUSH ALERTS VIA ENGINE
+    # ASYNC NOTIFICATIONS VIA BACKGROUND WORKER
     # =======================================================
-    
-    # 1. Notify the Manufacturer and drop them into their dashboard on click
-    create_system_notification(
+    # 1. Notify the Manufacturer
+    background_tasks.add_task(
+        create_system_notification,
         db=db,
         user_id=batch.manufacturer_id,
         title="Batch Received at Warehouse",
@@ -104,13 +105,13 @@ def receive_batch_at_warehouse(
         url="/manufacturing"
     )
 
-    # 2. Notify all active Distribution Team members and drop them into allocations on click
+    # 2. Notify active Distribution Team members
     dist_users = db.scalars(
         select(User).join(Role).where(Role.code == RoleCode.DISTRIBUTION_TEAM, User.is_active == True)
     ).all()
-    
     for dist_user in dist_users:
-        create_system_notification(
+        background_tasks.add_task(
+            create_system_notification,
             db=db,
             user_id=dist_user.id,
             title="New Stock Available",

@@ -8,22 +8,22 @@ import { useAuthStore } from "@/stores/auth-store";
 
 // The master navigation list that was missing!
 const items = [
-  { label: "Role Dashboard", href: "/", icon: Gauge, roles: ["SUPER_ADMIN", "MANAGER", "MANUFACTURER", "WAREHOUSE_OFFICER", "DISTRIBUTION_TEAM", "HUB_OFFICER", "AGENT"] },
-  { label: "Official Reports", href: "/reports", icon: FileBarChart, roles: ["SUPER_ADMIN", "MANAGER", "MANUFACTURER", "WAREHOUSE_OFFICER", "DISTRIBUTION_TEAM", "HUB_OFFICER"] },
-  { label: "Products", href: "/products", icon: Package, roles: ["SUPER_ADMIN", "MANUFACTURER", "WAREHOUSE_OFFICER", "HUB_OFFICER", "MANAGER", "DISTRIBUTION_TEAM", "AGENT"] },
+  { label: "Role Dashboard", href: "/", icon: Gauge, roles: ["SUPER_ADMIN", "MANAGER", "REGIONAL_MANAGER", "MANUFACTURER", "WAREHOUSE_OFFICER", "DISTRIBUTION_TEAM", "HUB_OFFICER", "AGENT"] },
+  { label: "Official Reports", href: "/reports", icon: FileBarChart, roles: ["SUPER_ADMIN", "MANAGER", "REGIONAL_MANAGER", "MANUFACTURER", "WAREHOUSE_OFFICER", "DISTRIBUTION_TEAM", "HUB_OFFICER"] },
+  { label: "Products", href: "/products", icon: Package, roles: ["SUPER_ADMIN", "MANUFACTURER", "WAREHOUSE_OFFICER", "REGIONAL_MANAGER", "HUB_OFFICER", "MANAGER", "DISTRIBUTION_TEAM", "AGENT"] },
   { label: "Manufacturing", href: "/manufacturing", icon: Factory, roles: ["SUPER_ADMIN", "MANUFACTURER", "MANAGER"] },
   { label: "Warehouse", href: "/warehouse", icon: Warehouse, roles: ["SUPER_ADMIN", "WAREHOUSE_OFFICER", "MANAGER"] },
   { label: "Distribution", href: "/distribution", icon: ClipboardCheck, roles: ["SUPER_ADMIN", "DISTRIBUTION_TEAM", "MANAGER"] },
-  { label: "Hubs", href: "/hubs", icon: Store, roles: ["SUPER_ADMIN", "HUB_OFFICER", "MANAGER"] },
-  { label: "Field Agents", href: "/field-agents", icon: UserCheck, roles: ["SUPER_ADMIN", "DISTRIBUTION_TEAM", "MANAGER"] },
+  { label: "Hubs", href: "/hubs", icon: Store, roles: ["SUPER_ADMIN", "HUB_OFFICER", "MANAGER", "REGIONAL_MANAGER"] },
+  { label: "Field Agents", href: "/field-agents", icon: UserCheck, roles: ["SUPER_ADMIN", "DISTRIBUTION_TEAM", "MANAGER", "REGIONAL_MANAGER"] },
 
 // THE FIX: Distribution Team gets access to My Agent App, Hub Officer removed
   { label: "My Agent App", href: "/agent", icon: UserSquare2, roles: ["SUPER_ADMIN", "AGENT", "DISTRIBUTION_TEAM"] },
   
   // THE FIX: New dedicated tab for Hub Officers!
-  { label: "Hub Agents", href: "/hub-agents", icon: Contact, roles: ["SUPER_ADMIN", "HUB_OFFICER", "MANAGER", "DISTRIBUTION_TEAM"] },
+  { label: "Hub Agents", href: "/hub-agents", icon: Contact, roles: ["SUPER_ADMIN", "HUB_OFFICER", "MANAGER", "DISTRIBUTION_TEAM", "REGIONAL_MANAGER"] },
 
-  { label: "System Logs", href: "/inventory", icon: History, roles: ["SUPER_ADMIN", "MANAGER", "DISTRIBUTION_TEAM", "MANUFACTURER", "WAREHOUSE_OFFICER", "HUB_OFFICER"] },
+  { label: "System Logs", href: "/inventory", icon: History, roles: ["SUPER_ADMIN", "MANAGER", "DISTRIBUTION_TEAM", "MANUFACTURER", "WAREHOUSE_OFFICER", "HUB_OFFICER", "REGIONAL_MANAGER"] },
   { label: "User Management", href: "/users", icon: Users, roles: ["SUPER_ADMIN"] },
 ];
 
