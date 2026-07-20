@@ -30,7 +30,7 @@ export default function FieldAgentsPage() {
   const createAgent = useMutation({
     mutationFn: async () => api.post("/distribution/agents", newAgentForm),
     onSuccess: async () => {
-      setNewAgentForm({ name: "", phone: "" });
+      setNewAgentForm({ name: "", phone: "", region: "" });
       setError(null);
       setSuccess("Agent successfully registered!");
       await queryClient.invalidateQueries({ queryKey: ["agents"] });
