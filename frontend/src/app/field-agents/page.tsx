@@ -18,6 +18,9 @@ export default function FieldAgentsPage() {
   const REGIONS = ["Greater Accra", "Ashanti", "Central", "Eastern", "Northern", "Western", "Volta", "Oti", "Bono", "Ahafo"];
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  // Add this right below your form states
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
 
   // Queries
   const products = useQuery({ queryKey: ["products"], queryFn: async () => (await api.get<ProductPage>("/products")).data });
@@ -79,6 +82,11 @@ export default function FieldAgentsPage() {
     },
     onError: (err: any) => setError(err.response?.data?.detail || "Failed to delete agent.")
   });
+
+  // Add this right above the return statement
+  const allAgents = agents.data ?? [];
+  const totalPages = Math.ceil(allAgents.length / itemsPerPage);
+  const paginatedAgents = allAgents.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   return (
     <AppShell title="Field Agents & Sales" description="Register field agents, allocate stock for dispatch, and log field sales.">
@@ -163,24 +171,28 @@ export default function FieldAgentsPage() {
         </section>
 
         {/* Tool 4: Manage Active Agents (Directory) */}
-        <section className="rounded-md border border-line bg-white shadow-sm overflow-hidden mb-12">
+        <section className="rounded-md border border-line bg-white shadow-sm flex flex-col h-fit mb-12">
           <div className="flex items-center gap-2 border-b border-line bg-slate-50 px-6 py-4">
             <Contact className="h-5 w-5 text-slate-600" />
             <h2 className="text-lg font-semibold text-ink">4. Active Agent Directory</h2>
           </div>
-          <div className="overflow-x-auto p-4">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-panel text-xs uppercase text-slate-500">
+          
+          {/* SCROLLABLE CONTAINER WITH MAX HEIGHT */}
+          <div className="overflow-x-auto overflow-y-auto max-h-[600px]">
+            <table className="w-full text-left text-sm whitespace-nowrap">
+              {/* STICKY HEADER */}
+              <thead className="bg-panel text-xs uppercase text-slate-500 sticky top-0 z-10 shadow-sm border-b border-line">
                 <tr>
-                  <th className="px-4 py-3">Agent Name</th>
-                  <th className="px-4 py-3">Code</th>
-                  <th className="px-4 py-3">Hub Location</th>
-                  <th className="px-4 py-3">Phone / Contact</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
+                  <th className="px-4 py-3 bg-panel">Agent Name</th>
+                  <th className="px-4 py-3 bg-panel">Code</th>
+                  <th className="px-4 py-3 bg-panel">Region</th>
+                  <th className="px-4 py-3 bg-panel">Phone / Contact</th>
+                  <th className="px-4 py-3 bg-panel text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {(agents.data ?? []).map((agent) => (
+                {/* MAPPING OVER PAGINATED AGENTS */}
+                {paginatedAgents.map((agent) => (
                   <tr key={agent.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3 font-semibold text-ink">{agent.name}</td>
                     <td className="px-4 py-3">
@@ -188,11 +200,9 @@ export default function FieldAgentsPage() {
                         {agent.agent_code}
                       </span>
                     </td>
-                    {/* NEW REGION CELL */}
                     <td className="px-4 py-3">
                        <span className="bg-indigo-50 text-indigo-700 px-2 py-1 rounded text-xs font-semibold">{agent.region || "N/A"}</span>
                     </td>
-                    <td className="px-4 py-3 text-slate-600">{hubNameById.get(agent.hub_id) ?? "Unknown"}</td>
                     <td className="px-4 py-3 text-slate-600">{(agent as any).territory || agent.phone || "N/A"}</td>
                     <td className="px-4 py-3 text-right">
                       <button
@@ -209,7 +219,7 @@ export default function FieldAgentsPage() {
                     </td>
                   </tr>
                 ))}
-                {(!agents.data || agents.data.length === 0) && (
+                {paginatedAgents.length === 0 && (
                   <tr>
                     <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
                       No active agents found in the system.
@@ -219,6 +229,31 @@ export default function FieldAgentsPage() {
               </tbody>
             </table>
           </div>
+
+          {/* PAGINATION FOOTER */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between border-t border-line px-6 py-3 bg-slate-50">
+              <span className="text-xs text-slate-500">
+                Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, allAgents.length)} of {allAgents.length} entries
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-3 py-1.5 text-xs font-medium border border-line bg-white text-slate-600 rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Previous
+                </button>
+                <button
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-3 py-1.5 text-xs font-medium border border-line bg-white text-slate-600 rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </section>
 
       </div>
