@@ -15,7 +15,6 @@ router = APIRouter()
 
 
 @router.get("", response_model=Page[ProductRead])
-@cache(expire=3600) 
 def list_products(
     search: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),

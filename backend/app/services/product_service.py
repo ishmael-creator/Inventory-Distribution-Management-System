@@ -16,13 +16,19 @@ class ProductService:
     def list_products(self, *, search: str | None, limit: int, offset: int) -> Page[ProductRead]:
         query = select(Product)
         count_query = select(func.count()).select_from(Product)
+
         if search:
             pattern = f"%{search}%"
             query = query.where(Product.name.ilike(pattern) | Product.sku.ilike(pattern))
             count_query = count_query.where(Product.name.ilike(pattern) | Product.sku.ilike(pattern))
+
         total = self.db.scalar(count_query) or 0
-        items = self.db.scalars(query.order_by(Product.name).limit(limit).offset(offset)).all()
-        return Page(items=items, total=total, limit=limit, offset=offset)
+        db_items = self.db.scalars(query.order_by(Product.name).limit(limit).offset(offset)).all()
+
+        # THE FIX: Explicitly convert raw database rows to Pydantic models so Redis can cache them safely
+        validated_items = [ProductRead.model_validate(item) for item in db_items]
+
+        return Page(items=validated_items, total=total, limit=limit, offset=offset)
 
     def create_product(self, payload: ProductCreate) -> Product:
         existing = self.db.scalar(select(Product).where(Product.sku == payload.sku.upper()))
