@@ -4,7 +4,7 @@ from fastapi import HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_
 
-from app.models.inventory import AllocationRequest, DispatchOrder, InventoryBalance, InventoryTransaction, AgentAllocation, AgentSale
+from app.models.inventory import AllocationRequest, DispatchOrder, InventoryBalance, InventoryTransaction, AgentAllocation, AgentSale, DeliveryDispute
 from app.models.user import Hub, User, Role, Agent
 from app.models.product import Product
 from app.core.enums import RoleCode
@@ -234,42 +234,71 @@ class DistributionService:
     def receive_dispatch(self, payload: HubReceiptCreate, user_id: uuid.UUID):
         dispatch = self.db.query(DispatchOrder).filter_by(id=payload.dispatch_order_id).first()
         if not dispatch: raise HTTPException(404, "Dispatch not found")
-        if dispatch.status == "RECEIVED": raise HTTPException(400, "Dispatch already received")
+        if dispatch.status in ["RECEIVED", "PARTIALLY_RECEIVED"]: 
+            raise HTTPException(400, "Dispatch already processed")
 
-        dispatch.status = "RECEIVED"
+        # Phase 2 mathematical verification
+        total_reported = payload.quantity_received + payload.damaged_quantity + payload.missing_quantity
+        if total_reported != dispatch.quantity: 
+            raise HTTPException(400, f"Accountability mismatch: Must account for exactly {dispatch.quantity} dispatched units.")
+
+        if payload.damaged_quantity > 0 or payload.missing_quantity > 0:
+            dispute = DeliveryDispute(
+                id=uuid.uuid4(),
+                dispatch_order_id=dispatch.id,
+                product_id=dispatch.product_id,
+                reported_by=user_id,
+                missing_quantity=payload.missing_quantity,
+                damaged_quantity=payload.damaged_quantity,
+                notes=payload.notes
+            )
+            self.db.add(dispute)
+            dispatch.status = "PARTIALLY_RECEIVED"
+            
+            self._notify_role(
+                RoleCode.SUPER_ADMIN,
+                "Hub Discrepancy Alert",
+                f"Hub reported {payload.damaged_quantity} damaged and {payload.missing_quantity} missing units from a recent dispatch.",
+                str(dispute.id),
+                "delivery_dispute"
+            )
+        else:
+            dispatch.status = "RECEIVED"
 
         req = self.db.query(AllocationRequest).filter_by(id=dispatch.allocation_request_id).first()
         if req: req.status = "FULFILLED"
 
-        hub_bal = self.db.query(InventoryBalance).filter_by(
-            location_id=dispatch.to_location_id, product_id=dispatch.product_id
-        ).first()
+        # Only give them credit for what they actually received in good condition
+        if payload.quantity_received > 0:
+            hub_bal = self.db.query(InventoryBalance).filter_by(
+                location_id=dispatch.to_location_id, product_id=dispatch.product_id
+            ).first()
 
-        if not hub_bal:
-            hub_bal = InventoryBalance(
+            if not hub_bal:
+                hub_bal = InventoryBalance(
+                    id=uuid.uuid4(),
+                    product_id=dispatch.product_id,
+                    location_type="HUB",
+                    location_id=dispatch.to_location_id,
+                    quantity=payload.quantity_received
+                )
+                self.db.add(hub_bal)
+            else:
+                hub_bal.quantity += payload.quantity_received
+
+            tx = InventoryTransaction(
                 id=uuid.uuid4(),
                 product_id=dispatch.product_id,
-                location_type="HUB",
-                location_id=dispatch.to_location_id,
-                quantity=payload.quantity_received
+                transaction_type="RECEIPT",
+                from_location_type=None,
+                from_location_id=None,
+                to_location_type="HUB",
+                to_location_id=dispatch.to_location_id,
+                quantity=payload.quantity_received,
+                created_by=user_id,
+                notes=getattr(payload, 'notes', "Confirmed partial/full receipt at Hub.")
             )
-            self.db.add(hub_bal)
-        else:
-            hub_bal.quantity += payload.quantity_received
-
-        tx = InventoryTransaction(
-            id=uuid.uuid4(),
-            product_id=dispatch.product_id,
-            transaction_type="RECEIPT",
-            from_location_type=None,
-            from_location_id=None,
-            to_location_type="HUB",
-            to_location_id=dispatch.to_location_id,
-            quantity=payload.quantity_received,
-            created_by=user_id,
-            notes=getattr(payload, 'notes', "Confirmed receipt at Hub.")
-        )
-        self.db.add(tx)
+            self.db.add(tx)
 
         product = self.db.get(Product, dispatch.product_id)
         product_name = product.name if product else "Unknown Product"
@@ -535,3 +564,16 @@ class DistributionService:
         self.db.add(tx)
         self.db.commit()
         return tx
+
+    def get_all_disputes(self):
+        return self.db.query(DeliveryDispute).order_by(DeliveryDispute.created_at.desc()).all()
+
+    def resolve_dispute(self, dispute_id: uuid.UUID, status: str, user_id: uuid.UUID):
+        dispute = self.db.query(DeliveryDispute).filter_by(id=dispute_id).first()
+        if not dispute:
+            raise HTTPException(404, "Dispute not found")
+        
+        dispute.status = status
+        self.db.commit()
+        self.db.refresh(dispute)
+        return dispute

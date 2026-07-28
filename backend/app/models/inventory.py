@@ -132,3 +132,22 @@ class AgentSale(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"))
     quantity: Mapped[int] = mapped_column(Integer)
     recorded_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+
+class DeliveryDispute(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "delivery_disputes"
+
+    dispatch_order_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("dispatch_orders.id"), nullable=True)
+    product_batch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("product_batches.id"), nullable=True)
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"), index=True)
+    reported_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    
+    missing_quantity: Mapped[int] = mapped_column(Integer, default=0)
+    damaged_quantity: Mapped[int] = mapped_column(Integer, default=0)
+    
+    status: Mapped[str] = mapped_column(String(40), default="PENDING") # PENDING, APPROVED_WRITE_OFF, REJECTED
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("missing_quantity >= 0", name="ck_dispute_missing_positive"),
+        CheckConstraint("damaged_quantity >= 0", name="ck_dispute_damaged_positive"),
+    )

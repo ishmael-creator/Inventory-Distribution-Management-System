@@ -21,6 +21,8 @@ from app.schemas.distribution import (
     AgentAllocationCreate,
     AgentSaleCreate,# <-- Added this import! (Make sure you put the schema in this file)
     AgentReturnCreate,  
+    DisputeRead,      # <-- ADD THIS
+    DisputeResolve
 )
 from app.services.distribution_service import DistributionService
 
@@ -208,3 +210,23 @@ def delete_hub(hub_id: uuid.UUID, db: Session = Depends(get_db), current_user: U
     if current_user.role.code != "SUPER_ADMIN": 
         raise HTTPException(403, "Not authorized to delete hubs.")
     return DistributionService(db).delete_hub(hub_id, current_user.id)
+
+@router.get("/disputes", response_model=list[DisputeRead])
+def list_disputes(
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role.code not in ["SUPER_ADMIN", "MANAGER"]:
+        raise HTTPException(403, "Not authorized to view disputes.")
+    return DistributionService(db).get_all_disputes()
+
+@router.post("/disputes/{dispute_id}/resolve", response_model=DisputeRead)
+def resolve_dispute(
+    dispute_id: uuid.UUID,
+    payload: DisputeResolve,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role.code != "SUPER_ADMIN":
+        raise HTTPException(403, "Only Super Admins can resolve delivery disputes.")
+    return DistributionService(db).resolve_dispute(dispute_id, payload.status, current_user.id)

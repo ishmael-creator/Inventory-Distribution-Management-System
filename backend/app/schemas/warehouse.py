@@ -19,7 +19,9 @@ class WarehouseRead(BaseModel):
 class WarehouseReceiptCreate(BaseModel):
     batch_id: uuid.UUID
     warehouse_id: uuid.UUID
-    quantity_received: int = Field(gt=0)
+    quantity_received: int = Field(ge=0)
+    damaged_quantity: int = Field(default=0, ge=0)
+    missing_quantity: int = Field(default=0, ge=0)
     notes: str | None = None
 
 # NEW: Schema for Direct External Imports
