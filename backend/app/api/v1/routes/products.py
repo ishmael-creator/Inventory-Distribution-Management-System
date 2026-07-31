@@ -1,8 +1,7 @@
 import uuid
-
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from fastapi_cache.decorator import cache
+
 from app.api.deps import require_permissions
 from app.db.session import get_db
 from app.models.user import User
@@ -13,7 +12,6 @@ from app.services.product_service import ProductService
 
 router = APIRouter()
 
-
 @router.get("", response_model=Page[ProductRead])
 def list_products(
     search: str | None = None,
@@ -23,7 +21,6 @@ def list_products(
     db: Session = Depends(get_db),
 ) -> Page[ProductRead]:
     return ProductService(db).list_products(search=search, limit=limit, offset=offset)
-
 
 @router.post("", response_model=ProductRead, status_code=201)
 def create_product(
@@ -42,7 +39,6 @@ def create_product(
     db.commit()
     db.refresh(product)
     return product
-
 
 @router.patch("/{product_id}", response_model=ProductRead)
 def update_product(
@@ -63,3 +59,18 @@ def update_product(
     db.refresh(product)
     return product
 
+@router.delete("/{product_id}")
+def delete_product(
+    product_id: uuid.UUID,
+    current_user: User = Depends(require_permissions("products.write")),
+    db: Session = Depends(get_db),
+):
+    result = ProductService(db).delete_product(product_id)
+    AuditService(db).log(
+        user_id=current_user.id,
+        action="product.deleted",
+        resource_type="product",
+        resource_id=product_id,
+    )
+    db.commit()
+    return result

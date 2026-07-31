@@ -17,11 +17,11 @@ from app.schemas.distribution import (
     HubRead,
     HubReceiptCreate,
     HubUpdate,
-     AgentCreate,
+    AgentCreate,
     AgentAllocationCreate,
-    AgentSaleCreate,# <-- Added this import! (Make sure you put the schema in this file)
+    AgentSaleCreate,
     AgentReturnCreate,  
-    DisputeRead,      # <-- ADD THIS
+    DisputeRead,      
     DisputeResolve
 )
 from app.services.distribution_service import DistributionService
@@ -229,4 +229,5 @@ def resolve_dispute(
 ):
     if current_user.role.code != "SUPER_ADMIN":
         raise HTTPException(403, "Only Super Admins can resolve delivery disputes.")
-    return DistributionService(db).resolve_dispute(dispute_id, payload.status, current_user.id)
+    # THE FIX: We are now passing payload.action and payload.notes!
+    return DistributionService(db).resolve_dispute(dispute_id, payload.action, payload.notes, current_user.id)

@@ -2,14 +2,14 @@ import os
 import uuid
 from app.db.session import engine, SessionLocal
 from app.models.user import Base, User, Role, Warehouse
+from app.models.product import Product
 from app.core.security import hash_password
 
 def run_seed():
     print("🔄 Ensuring all production database tables exist...")
     Base.metadata.create_all(bind=engine)
-    
     db = SessionLocal()
-    
+
     roles = {
         "SUPER_ADMIN": [
             "products.read", "products.write",
@@ -25,20 +25,20 @@ def run_seed():
             "products.read", "products.write", "manufacturing.read", "manufacturing.write", "manufacturing.release", "inventory.read", "warehouses.read"
         ],
         "WAREHOUSE_OFFICER": [
-            "products.read", "warehouses.read", "warehouse.receipts.write", "manufacturing.read_all", 
-            "manufacturing.read", "inventory.read", "hubs.read", "distribution.requests.read", 
+            "products.read", "warehouses.read", "warehouse.receipts.write", "manufacturing.read_all",
+            "manufacturing.read", "inventory.read", "hubs.read", "distribution.requests.read",
             "distribution.requests.review", "dispatches.read", "dispatches.write"
         ],
         "DISTRIBUTION_TEAM": [
-            "products.read", 
-            "inventory.read", 
-            "warehouses.read", 
+            "products.read",
+            "inventory.read",
+            "warehouses.read",
             "hubs.read", "hubs.write", "hub.receipts.write",
-            "distribution.requests.read", "distribution.requests.write", 
+            "distribution.requests.read", "distribution.requests.write",
             "dispatches.read", "dispatches.write"
         ],
         "MANAGER": [
-            "products.read", "warehouses.read", "hubs.read", "distribution.requests.read", 
+            "products.read", "warehouses.read", "hubs.read", "distribution.requests.read",
             "manufacturing.read_all", "manufacturing.read", "inventory.read", "dispatches.read"
         ],
         "HUB_OFFICER": [
@@ -55,22 +55,21 @@ def run_seed():
             role = db.query(Role).filter(Role.code == code_str).first()
             if not role:
                 role = Role(
-                    id=uuid.uuid4(), 
-                    code=code_str, 
-                    name=code_str.replace("_", " ").title(), 
+                    id=uuid.uuid4(),
+                    code=code_str,
+                    name=code_str.replace("_", " ").title(),
                     permissions=perms
                 )
                 db.add(role)
             else:
                 role.permissions = perms
-        
         db.commit()
 
         # Provision Production Super Admin
         admin_role = db.query(Role).filter(Role.code == "SUPER_ADMIN").first()
         prod_admin_email = "ishmael@upenergygroup.com"
         raw_password = os.getenv("SUPER_ADMIN_PASSWORD", "UpEnergyAdmin2026!")
-        
+
         admin_user = db.query(User).filter(User.email == prod_admin_email).first()
         if not admin_user:
             admin_user = User(
@@ -86,7 +85,7 @@ def run_seed():
         else:
             admin_user.role_id = admin_role.id
             admin_user.is_active = True
-        
+
         # Provision Central Warehouse
         central_wh = db.query(Warehouse).filter(Warehouse.name == "Central Warehouse").first()
         if not central_wh:
@@ -97,6 +96,27 @@ def run_seed():
                 is_active=True
             )
             db.add(central_wh)
+        
+        # Provision Hardcoded Default Products
+        default_products = [
+            {"name": "ICS - KLIK", "sku": "ICS-001", "unit": "unit"},
+            {"name": "ICS - Singapore", "sku": "ICS-002", "unit": "unit"},
+            {"name": "EPC", "sku": "EPC-001", "unit": "box"}
+        ]
+
+        for prod_data in default_products:
+            existing_prod = db.query(Product).filter(Product.sku == prod_data["sku"]).first()
+            if not existing_prod:
+                new_prod = Product(
+                    id=uuid.uuid4(),
+                    name=prod_data["name"],
+                    sku=prod_data["sku"],
+                    unit=prod_data["unit"],
+                    low_stock_threshold=0,
+                    is_active=True
+                )
+                db.add(new_prod)
+                print(f"✅ Provisioned Default Product: {prod_data['name']}")
 
         db.commit()
         print("✅ Production database constraints and assets verified.")

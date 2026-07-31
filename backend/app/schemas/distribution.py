@@ -89,12 +89,12 @@ class HubUpdate(BaseModel):
 class AgentCreate(BaseModel):
     name: str
     phone: Optional[str] = None
-    region: str  # NEW!
+    region: str  # Preserved!
     hub_id: Optional[uuid.UUID] = None
 
 class AgentAllocationCreate(BaseModel):
     agent_id: uuid.UUID
-    hub_id: uuid.UUID  # THE FIX: Tell the backend which hub the agent is going to!
+    hub_id: uuid.UUID  # Preserved fix! Tell the backend which hub the agent is going to!
     product_id: uuid.UUID
     quantity: int
 
@@ -111,6 +111,8 @@ class AgentReturnCreate(BaseModel):
     quantity: int
     target_hub_id: uuid.UUID
 
+# ---- UPDATED FOR INVESTIGATIONS BOARD ----
+
 class DisputeRead(BaseModel):
     id: uuid.UUID
     dispatch_order_id: uuid.UUID | None
@@ -122,7 +124,12 @@ class DisputeRead(BaseModel):
     status: str
     notes: str | None
     created_at: datetime
+    # We add this so we can easily show the resolver who reported it in the UI
+    reporter_name: str | None = None 
+    
     model_config = {"from_attributes": True}
 
 class DisputeResolve(BaseModel):
-    status: str  # e.g., "APPROVED_WRITE_OFF", "REJECTED_INVESTIGATING"
+    # This changes from 'status' to 'action' to support logic-based resolution
+    action: str  # INVESTIGATE, MARK_FOUND, RETURN_FACTORY, WRITE_OFF
+    notes: str | None = None # Required now for the audit trail

@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 from typing import Optional
 from fastapi import HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
@@ -7,9 +8,10 @@ from sqlalchemy import select, or_
 from app.models.inventory import AllocationRequest, DispatchOrder, InventoryBalance, InventoryTransaction, AgentAllocation, AgentSale, DeliveryDispute
 from app.models.user import Hub, User, Role, Agent
 from app.models.product import Product
-from app.core.enums import RoleCode
+from app.core.enums import RoleCode, LocationType, TransactionType
 from app.schemas.distribution import AgentReturnCreate, HubCreate, AllocationRequestCreate, AllocationRequestReview, HubReceiptCreate, AgentCreate, AgentAllocationCreate, AgentSaleCreate
 from app.utils.push_notifier import create_system_notification
+from app.services.inventory_service import InventoryService
 
 
 class DistributionService:
@@ -565,15 +567,73 @@ class DistributionService:
         self.db.commit()
         return tx
 
-    def get_all_disputes(self):
-        return self.db.query(DeliveryDispute).order_by(DeliveryDispute.created_at.desc()).all()
+    # ---- UPDATED INVESTIGATIONS LOGIC ----
 
-    def resolve_dispute(self, dispute_id: uuid.UUID, status: str, user_id: uuid.UUID):
+    def get_all_disputes(self):
+        disputes = self.db.query(DeliveryDispute).order_by(DeliveryDispute.created_at.desc()).all()
+        # Attach the reporter's name to the object dynamically for the UI
+        for d in disputes:
+            reporter = self.db.query(User).filter(User.id == d.reported_by).first()
+            d.reporter_name = reporter.full_name if reporter else "Unknown Officer"
+        return disputes
+
+    def resolve_dispute(self, dispute_id: uuid.UUID, action: str, notes: str | None, user_id: uuid.UUID):
         dispute = self.db.query(DeliveryDispute).filter_by(id=dispute_id).first()
         if not dispute:
             raise HTTPException(404, "Dispute not found")
-        
-        dispute.status = status
+
+        # 1. Initiate Investigation
+        if action == "INVESTIGATE":
+            dispute.status = "INVESTIGATING"
+            
+        # 2. Recover Missing Units to Inventory
+        elif action == "MARK_FOUND":
+            dispute.status = "RESOLVED_RECOVERED"
+            if dispute.missing_quantity > 0:
+                location_type = None
+                location_id = None
+                
+                # Figure out where these units were supposed to go
+                if dispute.dispatch_order_id:
+                    dispatch = self.db.query(DispatchOrder).filter_by(id=dispute.dispatch_order_id).first()
+                    location_type = LocationType.HUB
+                    location_id = dispatch.to_location_id if dispatch else None
+                elif dispute.product_batch_id:
+                    txn = self.db.query(InventoryTransaction).filter(
+                        InventoryTransaction.reference_id == dispute.product_batch_id,
+                        InventoryTransaction.transaction_type == TransactionType.WAREHOUSE_RECEIPT
+                    ).first()
+                    location_type = LocationType.WAREHOUSE
+                    location_id = txn.to_location_id if txn else None
+
+                # Inject them back into the live ledger
+                if location_type and location_id:
+                    InventoryService(self.db).record_movement(
+                        product_id=dispute.product_id,
+                        quantity=dispute.missing_quantity,
+                        transaction_type=TransactionType.ADJUSTMENT_REVERSAL,
+                        created_by=user_id,
+                        from_location_type=None,
+                        from_location_id=None,
+                        to_location_type=location_type,
+                        to_location_id=location_id,
+                        reference_id=dispute.id,
+                        reference_type="dispute_recovery",
+                        notes=f"Recovered {dispute.missing_quantity} missing units from investigation."
+                    )
+                    
+        # 3. Return Damaged Units to Factory
+        elif action == "RETURN_FACTORY":
+            dispute.status = "RESOLVED_RETURNED"
+            
+        # 4. Give up and formally write off the ledger
+        elif action == "WRITE_OFF":
+            dispute.status = "RESOLVED_LOST"
+
+        # Append Admin's resolution notes to the existing notes for the audit trail
+        if notes:
+            dispute.notes = f"{dispute.notes} | Resolution: {notes}" if dispute.notes else f"Resolution: {notes}"
+
         self.db.commit()
         self.db.refresh(dispute)
         return dispute

@@ -2,7 +2,7 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Factory, Send, User } from "lucide-react";
+import { Factory, Send } from "lucide-react";
 
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionButton } from "@/components/ui/action-button";
@@ -24,14 +24,13 @@ function batchTone(status: string): "success" | "warning" | "neutral" | undefine
 
 export default function ManufacturingPage() {
   const queryClient = useQueryClient();
-  const { userId, userRole, isOverrideEnabled } = useAuthStore();
+  const { userRole, isOverrideEnabled } = useAuthStore();
 
   const [form, setForm] = useState({
     product_id: "",
     quantity: "100",
     produced_at: toDatetimeLocal(new Date()),
   });
-  
   const [error, setError] = useState<string | null>(null);
 
   const products = useQuery({
@@ -83,7 +82,7 @@ export default function ManufacturingPage() {
   });
 
   const releaseBatch = useMutation({
-    mutationFn: async ({ batchId, destinationId }: { batchId: string; destinationId: string }) => 
+    mutationFn: async ({ batchId, destinationId }: { batchId: string; destinationId: string }) =>
       api.post<ProductBatch>(`/manufacturing/batches/${batchId}/release`, {
         destination_id: destinationId
       }),
@@ -100,21 +99,19 @@ export default function ManufacturingPage() {
   }
 
   const centralWarehouse = warehouses.data?.[0];
-  
+
   // Security Checks: Manufacturer or Overridden Admin
   const canCreate = userRole === "MANUFACTURER" || (userRole === "SUPER_ADMIN" && isOverrideEnabled);
 
   return (
     <AppShell title="Manufacturing" description="Create production batches and release them to the Central Warehouse.">
       <section className="grid gap-6 xl:grid-cols-[420px_1fr]">
-        
         {canCreate ? (
           <form onSubmit={onSubmit} className="rounded-md border border-line bg-white p-4 h-fit shadow-sm">
             <div className="mb-4 flex items-center gap-2">
               <Factory className="h-5 w-5 text-brand" />
               <h2 className="text-sm font-semibold text-ink">Create Production Batch</h2>
             </div>
-
             <div className="space-y-4">
               <SelectField
                 label="Product to Manufacture"
@@ -129,7 +126,6 @@ export default function ManufacturingPage() {
                   </option>
                 ))}
               </SelectField>
-
               <TextField
                 label="Quantity Produced"
                 min={1}
@@ -138,7 +134,6 @@ export default function ManufacturingPage() {
                 onChange={(event) => setForm({ ...form, quantity: event.target.value })}
                 required
               />
-
               <TextField
                 label="Produced At"
                 type="datetime-local"
@@ -146,9 +141,7 @@ export default function ManufacturingPage() {
                 onChange={(event) => setForm({ ...form, produced_at: event.target.value })}
                 required
               />
-
               {error && <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
-
               <ActionButton disabled={createBatch.isPending} type="submit" className="w-full h-11">
                 <Factory className="h-4 w-4 mr-2" />
                 {createBatch.isPending ? "Creating Batch..." : "Create Batch"}
@@ -163,67 +156,50 @@ export default function ManufacturingPage() {
           </div>
         )}
 
-        <section className="rounded-md border border-line bg-white shadow-sm overflow-hidden">
+        <section className="rounded-md border border-line bg-white shadow-sm overflow-hidden h-fit">
           <div className="border-b border-line bg-slate-50 px-4 py-3">
             <h2 className="text-sm font-semibold text-ink">Production Batch Log</h2>
           </div>
-          
-          <div className="overflow-x-auto min-h-[400px]">
-            <table className="w-full min-w-[900px] text-left text-sm">
-              <thead className="bg-panel text-xs uppercase text-slate-500">
+          {/* THE FIX: Added scrollability and sticky header */}
+          <div className="overflow-x-auto overflow-y-auto max-h-[600px]">
+            <table className="w-full min-w-[700px] text-left text-sm whitespace-nowrap">
+              <thead className="bg-panel text-xs uppercase text-slate-500 sticky top-0 z-10 shadow-sm border-b border-line">
                 <tr>
-                  <th className="px-4 py-3">Batch ID</th>
-                  <th className="px-4 py-3">Product</th>
-                  <th className="px-4 py-3">Creator</th>
-                  <th className="px-4 py-3">Quantity</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3 text-right">Action</th>
+                  <th className="px-4 py-3 bg-panel">Batch ID</th>
+                  <th className="px-4 py-3 bg-panel">Product</th>
+                  <th className="px-4 py-3 bg-panel">Quantity</th>
+                  <th className="px-4 py-3 bg-panel">Status</th>
+                  <th className="px-4 py-3 bg-panel text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
                 {(batches.data ?? []).map((batch) => {
-                  
-                  const isCreator = batch.created_by === userId;
-                  // REMOVED CREATOR LOCK: Any Manufacturer (or Admin Override) can release any batch
                   const canRelease = userRole === "MANUFACTURER" || (userRole === "SUPER_ADMIN" && isOverrideEnabled);
-
+                  
                   return (
-                    <tr key={batch.id} className="hover:bg-slate-50">
+                    <tr key={batch.id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-4 py-3 font-mono text-xs font-medium text-slate-600">{batch.batch_number}</td>
                       <td className="px-4 py-3 font-semibold text-ink">{productNameById.get(batch.product_id) ?? batch.product_id}</td>
-                      
-                      <td className="px-4 py-3">
-                        {isCreator ? (
-                          <span className="inline-flex items-center gap-1 rounded bg-teal-50 px-2 py-1 text-xs font-bold text-teal-700">
-                            <User className="h-3 w-3" /> You
-                          </span>
-                        ) : (
-                          <span className="text-xs text-slate-500 italic">Colleague / System</span>
-                        )}
-                      </td>
-
                       <td className="px-4 py-3 font-bold text-slate-700">{batch.quantity} Units</td>
                       <td className="px-4 py-3">
                         <StatusBadge tone={batchTone(batch.status)}>{batch.status.replaceAll("_", " ")}</StatusBadge>
                       </td>
-                      
                       <td className="px-4 py-3 text-right">
                         {batch.status === "AWAITING_RELEASE" ? (
                           <button
                             disabled={releaseBatch.isPending || !centralWarehouse || !canRelease}
                             onClick={() => {
-                              if (!canRelease) return; 
+                              if (!canRelease) return;
                               if (userRole === "SUPER_ADMIN" && !window.confirm("Warning: Admin Override. Proceed?")) return;
-                              
-                              releaseBatch.mutate({ 
-                                batchId: batch.id, 
-                                destinationId: centralWarehouse.id 
+                              releaseBatch.mutate({
+                                batchId: batch.id,
+                                destinationId: centralWarehouse.id
                               });
                             }}
                             type="button"
                             className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold transition-all ${
-                              canRelease 
-                                ? "bg-white border border-brand text-brand hover:bg-brand hover:text-white" 
+                              canRelease
+                                ? "bg-white border border-brand text-brand hover:bg-brand hover:text-white"
                                 : "bg-slate-100 text-slate-400 cursor-not-allowed border border-transparent"
                             }`}
                           >
@@ -237,10 +213,9 @@ export default function ManufacturingPage() {
                     </tr>
                   );
                 })}
-                
                 {!batches.data?.length && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-12 text-center text-slate-500">
+                    <td colSpan={5} className="px-4 py-12 text-center text-slate-500">
                       No production batches found in the system.
                     </td>
                   </tr>

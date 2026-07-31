@@ -1,26 +1,21 @@
 import uuid
 from datetime import UTC, datetime
-
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-# THE FIX: Added RoleCode to imports
 from app.core.enums import BatchStatus, LocationType, TransactionType, RoleCode
 from app.models.product import ProductBatch
-# THE FIX: Added User, Role, and Notification to imports
 from app.models.user import Warehouse, User, Role
 from app.models.notification import Notification
 from app.schemas.warehouse import WarehouseCreate, WarehouseReceiptCreate
 from app.services.audit_service import AuditService
 from app.services.inventory_service import InventoryService
 
-
 class WarehouseService:
     def __init__(self, db: Session):
         self.db = db
 
-    # THE FIX: Helper function to broadcast to roles
     def _notify_role(self, role_code: str, title: str, message: str, ref_id: str, ref_type: str):
         users = self.db.scalars(
             select(User).join(Role).where(Role.code == role_code, User.is_active == True)
@@ -40,6 +35,7 @@ class WarehouseService:
         warehouse = Warehouse(**payload.model_dump())
         self.db.add(warehouse)
         self.db.flush()
+
         AuditService(self.db).log(
             user_id=user_id,
             action="warehouse.created",
@@ -53,21 +49,23 @@ class WarehouseService:
 
     def receive_batch(self, payload: WarehouseReceiptCreate, user_id: uuid.UUID) -> ProductBatch:
         batch = self.db.scalar(select(ProductBatch).where(ProductBatch.id == payload.batch_id).with_for_update())
+        
         if batch is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found")
+
         if batch.status != BatchStatus.RELEASED_TO_WAREHOUSE:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Batch is not awaiting warehouse receipt")
-        # Remove the Phase 1 lock and add the Phase 2 mathematical verification
+
         total_reported = payload.quantity_received + payload.damaged_quantity + payload.missing_quantity
         if total_reported != batch.quantity:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, 
+                status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Accountability mismatch: You must account for exactly {batch.quantity} units (Received + Damaged + Missing)."
             )
 
-        # Log discrepancy if things went wrong in transit
+        # 1. Handle Missing/Damaged Units (Quarantine)
         if payload.damaged_quantity > 0 or payload.missing_quantity > 0:
-            from app.models.inventory import DeliveryDispute # Import your new model
+            from app.models.inventory import DeliveryDispute 
             dispute = DeliveryDispute(
                 id=uuid.uuid4(),
                 product_batch_id=batch.id,
@@ -79,7 +77,7 @@ class WarehouseService:
             )
             self.db.add(dispute)
             
-            # Alert the Super Admin / Manager immediately
+            # Alert the Super Admin immediately
             self._notify_role(
                 RoleCode.SUPER_ADMIN,
                 "Delivery Discrepancy Alert",
@@ -88,15 +86,20 @@ class WarehouseService:
                 "delivery_dispute"
             )
 
-        # Process the ACTUAL good inventory they received into the ledger
+        # 2. Process the ACTUAL good inventory they received into the ledger
         if payload.quantity_received > 0:
+            if self.db.get(Warehouse, payload.warehouse_id) is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Warehouse not found")
+
             InventoryService(self.db).record_movement(
                 product_id=batch.product_id,
                 quantity=payload.quantity_received,
                 transaction_type=TransactionType.WAREHOUSE_RECEIPT,
                 created_by=user_id,
-                from_location_type=LocationType.MANUFACTURER,
-                from_location_id=batch.manufacturer_id,
+                # THE FIX: This is now "None" because it's arriving from transit. 
+                # It was already deducted from the Manufacturer during Release!
+                from_location_type=None,  
+                from_location_id=None,
                 to_location_type=LocationType.WAREHOUSE,
                 to_location_id=payload.warehouse_id,
                 reference_id=batch.id,
@@ -104,27 +107,10 @@ class WarehouseService:
                 notes=payload.notes,
             )
 
-        batch.status = BatchStatus.RECEIVED_AT_WAREHOUSE if payload.missing_quantity == 0 and payload.damaged_quantity == 0 else BatchStatus.AWAITING_RELEASE # or a new PARTIALLY_RECEIVED status if you add it to the Enum
-        batch.received_at = datetime.now(UTC)
-        
-        if self.db.get(Warehouse, payload.warehouse_id) is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Warehouse not found")
-
-        InventoryService(self.db).record_movement(
-            product_id=batch.product_id,
-            quantity=payload.quantity_received,
-            transaction_type=TransactionType.WAREHOUSE_RECEIPT,
-            created_by=user_id,
-            from_location_type=LocationType.MANUFACTURER,
-            from_location_id=batch.manufacturer_id,
-            to_location_type=LocationType.WAREHOUSE,
-            to_location_id=payload.warehouse_id,
-            reference_id=batch.id,
-            reference_type="product_batch",
-            notes=payload.notes,
-        )
+        # 3. Update the Batch Status
         batch.status = BatchStatus.RECEIVED_AT_WAREHOUSE
         batch.received_at = datetime.now(UTC)
+
         AuditService(self.db).log(
             user_id=user_id,
             action="warehouse.batch_received",
@@ -133,7 +119,7 @@ class WarehouseService:
             new_values={"warehouse_id": str(payload.warehouse_id), "quantity_received": payload.quantity_received},
         )
 
-        # THE FIX: 1. Target the specific manufacturer who made this batch
+        # 4. Notify the Manufacturer that their truck arrived
         notif_manu = Notification(
             id=uuid.uuid4(),
             user_id=batch.manufacturer_id,
@@ -144,7 +130,7 @@ class WarehouseService:
         )
         self.db.add(notif_manu)
 
-        # THE FIX: 2. Broadcast to the Distribution Team so they know stock is available
+        # 5. Broadcast to the Distribution Team so they know stock is available
         self._notify_role(
             RoleCode.DISTRIBUTION_TEAM,
             "New Stock Available",
@@ -155,4 +141,5 @@ class WarehouseService:
 
         self.db.commit()
         self.db.refresh(batch)
+
         return batch

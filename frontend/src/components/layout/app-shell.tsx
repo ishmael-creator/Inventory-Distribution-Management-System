@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { type ReactNode, useState, type FormEvent, useEffect, useRef } from "react";
 import { LogOut, ShieldAlert, KeyRound, CheckCircle2, Bell, CheckCheck, Inbox, ChevronDown, ChevronUp, Settings2 } from "lucide-react";
 import { Sidebar } from "@/components/layout/sidebar";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { useAuthStore } from "@/stores/auth-store";
 import { api } from "@/lib/api";
 
@@ -40,16 +39,18 @@ export function AppShell({ title, description, children }: { title: string; desc
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isDesktopCollapsed, setIsDesktopCollapsed] = useState(false);
+  
   const [expandedNotifs, setExpandedNotifs] = useState<Set<string>>(new Set());
-
   const notifRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
-  const unreadCount = notifications.filter((n) => !n.is_read).length;
 
+  const unreadCount = notifications.filter((n) => !n.is_read).length;
   const userInitial = email ? email.charAt(0).toUpperCase() : "U";
 
   useEffect(() => {
     if (!accessToken || mustChangePassword) return;
+
     const fetchNotifications = async () => {
       try {
         const response = await api.get<Notification[]>("/notifications");
@@ -58,6 +59,7 @@ export function AppShell({ title, description, children }: { title: string; desc
         console.error("Failed to fetch notifications", err);
       }
     };
+
     fetchNotifications();
     const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
@@ -111,11 +113,12 @@ export function AppShell({ title, description, children }: { title: string; desc
     setError(null);
     if (newPassword !== confirmPassword) return setError("New passwords do not match.");
     if (newPassword.length < 8) return setError("Password must be at least 8 characters long.");
+    
     setIsSubmitting(true);
     try {
-      const response = await api.post<{ access_token: string }>("/auth/change-password", { 
-        old_password: oldPassword.trim(), // ✅ THE FIX: Destroys invisible copied spaces!
-        new_password: newPassword 
+      const response = await api.post<{ access_token: string }>("/auth/change-password", {
+        old_password: oldPassword.trim(),
+        new_password: newPassword
       });
       setAccessToken(response.data.access_token);
     } catch (err: any) {
@@ -145,20 +148,25 @@ export function AppShell({ title, description, children }: { title: string; desc
 
   return (
     <main className="flex min-h-screen bg-[#eef2f6]">
-      <Sidebar isOpen={isMobileMenuOpen} onClose={() => setIsMobileMenuOpen(false)} />
-      
+      <Sidebar 
+        isOpen={isMobileMenuOpen} 
+        isCollapsed={isDesktopCollapsed} 
+        onClose={() => setIsMobileMenuOpen(false)} 
+        onToggleCollapse={() => setIsDesktopCollapsed(!isDesktopCollapsed)}
+      />
+
       <section className="min-w-0 flex-1 flex flex-col h-screen">
-        {/* Header - Locked to h-16 for perfect horizontal alignment */}
         <header className="flex h-16 shrink-0 items-center justify-between border-b border-line bg-white px-4 lg:px-8">
-          
           <div className="flex items-center gap-3">
-            <button 
-              onClick={() => setIsMobileMenuOpen(true)} 
+            
+            {/* The desktop hamburger has been removed! This is strictly for mobile viewing. */}
+            <button
+              onClick={() => setIsMobileMenuOpen(true)}
               className="lg:hidden p-2 -ml-2 text-slate-600 hover:bg-slate-100 rounded-md"
             >
-              {/* Menu (Hamburger) Icon */}
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg>
             </button>
+
             <div className="hidden sm:block">
               <h1 className="text-lg font-bold text-ink">{title}</h1>
             </div>
@@ -189,6 +197,7 @@ export function AppShell({ title, description, children }: { title: string; desc
                     </span>
                   )}
                 </button>
+
                 {isNotifOpen && (
                   <div className="absolute right-0 top-full mt-2 w-80 overflow-hidden rounded-md border border-line bg-white shadow-lg z-50">
                     <div className="flex items-center justify-between border-b border-line bg-slate-50 px-4 py-3">
@@ -247,7 +256,7 @@ export function AppShell({ title, description, children }: { title: string; desc
             {/* Modern Avatar User Menu */}
             {accessToken ? (
               <div className="relative" ref={userMenuRef}>
-                <button 
+                <button
                   onClick={() => { setIsUserMenuOpen(!isUserMenuOpen); setIsNotifOpen(false); }}
                   className="flex h-9 w-9 items-center justify-center rounded-full bg-brand text-white shadow-sm hover:ring-2 hover:ring-brand/30 focus:outline-none transition-all"
                 >
@@ -263,7 +272,7 @@ export function AppShell({ title, description, children }: { title: string; desc
                       <button className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 text-left">
                         <Settings2 className="h-4 w-4" /> Settings
                       </button>
-                      <button 
+                      <button
                         onClick={handleSignOut}
                         className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-red-600 hover:bg-red-50 text-left font-medium"
                       >
@@ -281,7 +290,6 @@ export function AppShell({ title, description, children }: { title: string; desc
 
         {/* Main Content Area */}
         <div className="flex-1 overflow-y-auto p-4 lg:p-8">
-          {/* Mobile Title (Since header space is limited on phones) */}
           <div className="sm:hidden mb-6">
             <h1 className="text-xl font-bold text-ink">{title}</h1>
             <p className="text-sm text-slate-500 mt-1">{description}</p>

@@ -9,15 +9,15 @@ from fastapi import status
 from app.api.deps import get_current_user, require_permissions
 from app.core.enums import LocationType, TransactionType, RoleCode
 from app.db.session import get_db
-from app.models.inventory import InventoryBalance, InventoryTransaction, Receipt, DispatchOrder, AllocationRequest, StockMovement
+
+# Added AgentSale, AgentAllocation, and DeliveryDispute to the imports
+from app.models.inventory import InventoryBalance, InventoryTransaction, Receipt, DispatchOrder, AllocationRequest, StockMovement, AgentSale, AgentAllocation, DeliveryDispute
 from app.models.user import User, Agent
 from app.schemas.inventory import InventoryBalanceRead, InventoryTransactionRead
 from app.models.product import ProductBatch
 from app.models.notification import Notification
-# Make sure you have your dependencies imported (Session, get_db, get_current_user, etc.)
 
 router = APIRouter()
-
 
 @router.get("/balances", response_model=list[InventoryBalanceRead])
 def list_balances(
@@ -36,7 +36,6 @@ def list_balances(
         query = query.where(InventoryBalance.location_id == location_id)
     return list(db.scalars(query.limit(200)).all())
 
-
 @router.get("/transactions", response_model=list[InventoryTransactionRead])
 def list_transactions(
     product_id: uuid.UUID | None = None,
@@ -49,79 +48,67 @@ def list_transactions(
         query = query.where(InventoryTransaction.product_id == product_id)
     return list(db.scalars(query.limit(limit)).all())
 
-
 @router.get("/agent/balances", response_model=list[InventoryBalanceRead])
 def get_agent_inventory_balances(
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user) # Adjust this to match your actual auth dependency!
+    current_user = Depends(get_current_user) 
 ):
-    # 1. Find the agent profile linked to the logged-in user
     agent = db.query(Agent).filter(Agent.user_id == current_user.id).first()
-    
     if not agent:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="No Agent profile found for this user."
         )
 
-    # 2. Fetch only the inventory balances belonging to this specific Agent
     balances = db.query(InventoryBalance).filter(
         InventoryBalance.location_type == LocationType.AGENT,
         InventoryBalance.location_id == agent.id,
-        InventoryBalance.quantity > 0 # Optional: Only show products they actually have in stock
+        InventoryBalance.quantity > 0 
     ).all()
 
     return balances
 
-
-# 1. The Schema (Tells FastAPI what data to expect from the frontend)
 class CustomerSaleRequest(BaseModel):
     product_id: uuid.UUID
     quantity: int = Field(gt=0)
 
-# 2. The Route
 @router.post("/agent/sales")
 def record_agent_sale(
     sale_data: CustomerSaleRequest,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user) 
+    current_user = Depends(get_current_user)
 ):
-    # Find the logged-in Agent
     agent = db.query(Agent).filter(Agent.user_id == current_user.id).first()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent profile not found.")
 
-    # Find their specific inventory balance for this product and lock it
     balance = db.query(InventoryBalance).filter(
         InventoryBalance.location_type == LocationType.AGENT,
         InventoryBalance.location_id == agent.id,
         InventoryBalance.product_id == sale_data.product_id
     ).with_for_update().first()
 
-    # Make sure they aren't trying to sell ghost inventory
     if not balance or balance.quantity < sale_data.quantity:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail=f"Insufficient stock. You only have {balance.quantity if balance else 0} available."
         )
 
-    # Deduct the stock
     balance.quantity -= sale_data.quantity
 
-    # Record the immutable ledger transaction
     transaction = InventoryTransaction(
         product_id=sale_data.product_id,
-        transaction_type=TransactionType.DISPATCH, # We use DISPATCH because it is leaving the system
+        transaction_type=TransactionType.DISPATCH, 
         quantity=sale_data.quantity,
         from_location_type=LocationType.AGENT,
         from_location_id=agent.id,
-        to_location_type=None, # None, because the customer isn't a physical Hub/Agent in our database
-        to_location_id=None, 
+        to_location_type=None, 
+        to_location_id=None,
         reference_type="END_CUSTOMER_SALE",
         created_by=current_user.id
     )
     db.add(transaction)
-    
+
     try:
         db.commit()
         return {"status": "success", "message": f"Successfully sold {sale_data.quantity} units!"}
@@ -135,12 +122,15 @@ def factory_reset_system(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Security: Hard-lock this route exclusively to Super Admins
     if current_user.role.code != RoleCode.SUPER_ADMIN:
         raise HTTPException(status_code=403, detail="Only Super Admin can reset the system.")
-    
+
     try:
         # Delete in strict reverse-dependency order to satisfy Postgres constraints
+        db.execute(delete(DeliveryDispute))  # NEW
+        db.execute(delete(AgentSale))        # NEW
+        db.execute(delete(AgentAllocation))  # NEW
+        
         db.execute(delete(Receipt))
         db.execute(delete(DispatchOrder))
         db.execute(delete(AllocationRequest))
@@ -148,8 +138,7 @@ def factory_reset_system(
         db.execute(delete(InventoryTransaction))
         db.execute(delete(InventoryBalance))
         db.execute(delete(ProductBatch))
-        db.execute(delete(Notification)) 
-        
+        db.execute(delete(Notification))
         db.commit()
         return {"status": "success", "message": "All operational numbers reset to zero."}
     except Exception as e:
