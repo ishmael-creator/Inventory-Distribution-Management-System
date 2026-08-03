@@ -5,6 +5,7 @@ const toneMap = {
   success: "bg-emerald-50 text-emerald-700 ring-emerald-200",
   warning: "bg-amber-50 text-amber-700 ring-amber-200",
   neutral: "bg-slate-50 text-slate-700 ring-slate-200",
+  danger: "bg-red-50 text-red-700 ring-red-200", // <-- Added danger tone
 };
 
 export function StatusBadge({
