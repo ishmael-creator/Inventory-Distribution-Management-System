@@ -20,9 +20,13 @@ from app.schemas.distribution import (
     AgentCreate,
     AgentAllocationCreate,
     AgentSaleCreate,
-    AgentReturnCreate,  
-    DisputeRead,      
-    DisputeResolve
+    AgentReturnCreate,
+    DisputeRead,
+    DisputeResolve,
+    HubTransferCreate,
+    AgentReallocationCreate,
+    ReverseDispatchCreate,
+    ReverseReceiptCreate
 )
 from app.services.distribution_service import DistributionService
 
@@ -35,11 +39,11 @@ def list_hubs(
 ):
     # THE FIX: Only fetch active hubs!
     query = select(Hub).where(Hub.is_active == True)
-    
+
     # STRICT ISOLATION: If they are a Hub Officer, they only get to see their own Hub
     if current_user.role.code == "HUB_OFFICER" and current_user.assigned_hub_id:
         query = query.where(Hub.id == current_user.assigned_hub_id)
-        
+
     return list(db.scalars(query.order_by(Hub.name)).all())
 
 
@@ -120,7 +124,7 @@ def receive_dispatch(
 @router.patch("/hubs/{hub_id}")
 def assign_hub_manager(
     hub_id: uuid.UUID,
-    hub_data: HubUpdate, 
+    hub_data: HubUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -130,7 +134,7 @@ def assign_hub_manager(
     # 1. Security Check: Only let Super Admins or Admins do this
     if current_user.role.code not in ["SUPER_ADMIN", "ADMIN"]:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to assign hub managers"
         )
 
@@ -160,16 +164,16 @@ def create_agent(payload: AgentCreate, db: Session = Depends(get_db), current_us
 
 @router.get("/agents")
 def list_agents(hub_id: Optional[uuid.UUID] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER", "HUB_OFFICER", "REGIONAL_MANAGER"]: 
+    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN", "MANAGER", "HUB_OFFICER", "REGIONAL_MANAGER"]:
         raise HTTPException(403, "Not authorized to view agents.")
-        
+
     # STRICT ISOLATION: Force Hub Officers to only see their own agents
     if current_user.role.code == "HUB_OFFICER" and current_user.assigned_hub_id:
         hub_id = current_user.assigned_hub_id
 
     # THE FIX: Pass current_user to the service to trigger the region logic
     return DistributionService(db).get_agents(hub_id, current_user)
-        
+
 
 @router.post("/agents/allocate")
 def allocate_stock(payload: AgentAllocationCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -200,20 +204,20 @@ def return_stock(payload: AgentReturnCreate, db: Session = Depends(get_db), curr
 @router.delete("/agents/{agent_id}")
 def delete_agent(agent_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # Restrict deletion rights to Super Admins and Distribution Team
-    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN"]: 
+    if current_user.role.code not in ["DISTRIBUTION_TEAM", "SUPER_ADMIN"]:
         raise HTTPException(403, "Not authorized to delete agents.")
     return DistributionService(db).delete_agent(agent_id, current_user.id)
 
 @router.delete("/hubs/{hub_id}")
 def delete_hub(hub_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # Restrict deletion rights to Super Admins
-    if current_user.role.code != "SUPER_ADMIN": 
+    if current_user.role.code != "SUPER_ADMIN":
         raise HTTPException(403, "Not authorized to delete hubs.")
     return DistributionService(db).delete_hub(hub_id, current_user.id)
 
 @router.get("/disputes", response_model=list[DisputeRead])
 def list_disputes(
-    db: Session = Depends(get_db), 
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     if current_user.role.code not in ["SUPER_ADMIN", "MANAGER"]:
@@ -231,3 +235,54 @@ def resolve_dispute(
         raise HTTPException(403, "Only Super Admins can resolve delivery disputes.")
     # THE FIX: We are now passing payload.action and payload.notes!
     return DistributionService(db).resolve_dispute(dispute_id, payload.action, payload.notes, current_user.id)
+
+@router.post("/hubs/transfer", response_model=DispatchOrderRead)
+def hub_to_hub_transfer(
+    payload: HubTransferCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role.code not in ["DISTRIBUTION_TEAM", "REGIONAL_MANAGER", "SUPER_ADMIN", "MANAGER"]:
+        raise HTTPException(403, "Not authorized to initiate lateral hub transfers.")
+    return DistributionService(db).initiate_hub_transfer(payload, current_user)
+
+@router.post("/hubs/transfer/{dispatch_id}/dispatch", response_model=DispatchOrderRead)
+def execute_hub_transfer(
+    dispatch_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Only the Hub Officer physically located at the Source Hub (or Admins) can click this
+    if current_user.role.code not in ["HUB_OFFICER", "SUPER_ADMIN", "MANAGER"]:
+        raise HTTPException(403, "Not authorized to dispatch lateral hub transfers.")
+    return DistributionService(db).execute_hub_transfer(dispatch_id, current_user)
+
+@router.post("/agents/reallocate")
+def reallocate_agent_stock(
+    payload: AgentReallocationCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role.code not in ["DISTRIBUTION_TEAM", "REGIONAL_MANAGER", "SUPER_ADMIN", "MANAGER"]:
+        raise HTTPException(403, "Not authorized to reallocate field stock.")
+    return DistributionService(db).reallocate_agent_stock(payload, current_user)
+
+@router.post("/reverse-logistics/dispatch", response_model=DispatchOrderRead)
+def dispatch_reverse_logistics(
+    payload: ReverseDispatchCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role.code not in ["HUB_OFFICER", "WAREHOUSE_OFFICER", "SUPER_ADMIN", "MANAGER"]:
+        raise HTTPException(403, "Not authorized to dispatch reverse logistics.")
+    return DistributionService(db).dispatch_reverse_stock(payload, current_user)
+
+@router.post("/reverse-logistics/receive", response_model=DispatchOrderRead)
+def receive_reverse_logistics(
+    payload: ReverseReceiptCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role.code not in ["WAREHOUSE_OFFICER", "MANUFACTURER", "SUPER_ADMIN", "MANAGER"]:
+        raise HTTPException(403, "Not authorized to receive reverse logistics.")
+    return DistributionService(db).receive_reverse_stock(payload, current_user)

@@ -9,7 +9,11 @@ from app.models.inventory import AllocationRequest, DispatchOrder, InventoryBala
 from app.models.user import Hub, User, Role, Agent
 from app.models.product import Product
 from app.core.enums import RoleCode, LocationType, TransactionType
-from app.schemas.distribution import AgentReturnCreate, HubCreate, AllocationRequestCreate, AllocationRequestReview, HubReceiptCreate, AgentCreate, AgentAllocationCreate, AgentSaleCreate
+from app.schemas.distribution import (
+    AgentReturnCreate, HubCreate, AllocationRequestCreate, AllocationRequestReview,
+    HubReceiptCreate, AgentCreate, AgentAllocationCreate, AgentSaleCreate,
+    HubTransferCreate, AgentReallocationCreate, ReverseDispatchCreate, ReverseReceiptCreate  # <-- Added the new schemas here
+)
 from app.utils.push_notifier import create_system_notification
 from app.services.inventory_service import InventoryService
 
@@ -52,10 +56,10 @@ class DistributionService:
     def delete_hub(self, hub_id: uuid.UUID, user_id: uuid.UUID):
         hub = self.db.query(Hub).filter_by(id=hub_id).first()
         if not hub: raise HTTPException(404, "Hub not found")
-        
+
         # Soft delete the Hub
         hub.is_active = False
-        
+
         # Also soft-delete any Hub Officers assigned exclusively to this hub to revoke their access
         officers = self.db.query(User).filter_by(assigned_hub_id=hub.id).all()
         for officer in officers:
@@ -172,9 +176,9 @@ class DistributionService:
             status="DISPATCHED"
         )
         self.db.add(dispatch)
-        
+
         req.status = "FULFILLED"
-        
+
         tx = InventoryTransaction(
             id=uuid.uuid4(),
             product_id=req.product_id,
@@ -236,12 +240,12 @@ class DistributionService:
     def receive_dispatch(self, payload: HubReceiptCreate, user_id: uuid.UUID):
         dispatch = self.db.query(DispatchOrder).filter_by(id=payload.dispatch_order_id).first()
         if not dispatch: raise HTTPException(404, "Dispatch not found")
-        if dispatch.status in ["RECEIVED", "PARTIALLY_RECEIVED"]: 
+        if dispatch.status in ["RECEIVED", "PARTIALLY_RECEIVED"]:
             raise HTTPException(400, "Dispatch already processed")
 
         # Phase 2 mathematical verification
         total_reported = payload.quantity_received + payload.damaged_quantity + payload.missing_quantity
-        if total_reported != dispatch.quantity: 
+        if total_reported != dispatch.quantity:
             raise HTTPException(400, f"Accountability mismatch: Must account for exactly {dispatch.quantity} dispatched units.")
 
         if payload.damaged_quantity > 0 or payload.missing_quantity > 0:
@@ -256,7 +260,7 @@ class DistributionService:
             )
             self.db.add(dispute)
             dispatch.status = "PARTIALLY_RECEIVED"
-            
+
             self._notify_role(
                 RoleCode.SUPER_ADMIN,
                 "Hub Discrepancy Alert",
@@ -288,12 +292,13 @@ class DistributionService:
             else:
                 hub_bal.quantity += payload.quantity_received
 
+            # THE FIX: We map the exact origin so the report logs accurately track Lateral Hub Transfers
             tx = InventoryTransaction(
                 id=uuid.uuid4(),
                 product_id=dispatch.product_id,
                 transaction_type="RECEIPT",
-                from_location_type=None,
-                from_location_id=None,
+                from_location_type=dispatch.from_location_type,
+                from_location_id=dispatch.from_location_id,
                 to_location_type="HUB",
                 to_location_id=dispatch.to_location_id,
                 quantity=payload.quantity_received,
@@ -328,20 +333,20 @@ class DistributionService:
         self.db.commit()
         self.db.refresh(dispatch)
         return dispatch
-    
+
     def create_agent(self, payload: AgentCreate, admin_user_id: uuid.UUID):
         agent_code = f"AGT-{uuid.uuid4().hex[:6].upper()}"
-        
+
         # 1. Fetch the AGENT role from the database
         agent_role = self.db.query(Role).filter_by(code=RoleCode.AGENT).first()
         if not agent_role:
             raise HTTPException(500, "System AGENT role is missing. Cannot create agent.")
-            
+
         # 2. Create a 'Shadow User' to satisfy the strict 1-to-1 database constraint
         # This gives them a real system identity without granting them actual login access
         shadow_user = User(
             id=uuid.uuid4(),
-            email=f"{agent_code.lower()}@upenergy.local",
+            email=f"{agent_code.lower()}@upenergy.com",
             full_name=payload.name,
             hashed_password="no_login_allowed_yet",
             role_id=agent_role.id,
@@ -349,7 +354,7 @@ class DistributionService:
         )
         self.db.add(shadow_user)
         self.db.flush() # Locks in the shadow_user.id without fully committing yet
-        
+
         # 3. Create the actual Agent Profile
         agent = Agent(
             id=uuid.uuid4(),
@@ -365,7 +370,7 @@ class DistributionService:
         self.db.commit()
         self.db.refresh(agent)
         return agent
-    
+
     def get_agents(self, hub_id: Optional[uuid.UUID] = None, current_user: User = None):
         query = self.db.query(Agent).filter(Agent.is_active == True)
         if hub_id: query = query.filter(Agent.hub_id == hub_id)
@@ -373,7 +378,7 @@ class DistributionService:
         # THE CLAIMED VS UNCLAIMED LOGIC
         if current_user and current_user.role.code == RoleCode.REGIONAL_MANAGER:
             my_region = current_user.assigned_region
-            
+
             # 1. Find all active regional managers and their regions (excluding myself)
             other_rms = self.db.query(User).join(Role).filter(
                 Role.code == RoleCode.REGIONAL_MANAGER,
@@ -381,7 +386,7 @@ class DistributionService:
                 User.id != current_user.id,
                 User.assigned_region.isnot(None)
             ).all()
-            
+
             claimed_regions = [rm.assigned_region for rm in other_rms]
 
             # 2. Filter: Show agents in MY region OR agents in UNCLAIMED regions
@@ -395,7 +400,7 @@ class DistributionService:
                 )
 
         return query.all()
-    
+
     def delete_agent(self, agent_id: uuid.UUID, user_id: uuid.UUID):
         agent = self.db.query(Agent).filter_by(id=agent_id).first()
         if not agent: raise HTTPException(404, "Agent not found")
@@ -430,7 +435,7 @@ class DistributionService:
             location_id=payload.hub_id,
             product_id=payload.product_id
         ).first()
-        
+
         available_qty = hub_bal.quantity if hub_bal else 0
         if available_qty < payload.quantity:
             product = self.db.get(Product, payload.product_id)
@@ -445,7 +450,7 @@ class DistributionService:
             quantity=payload.quantity, status="PENDING", allocated_by=user_id
         )
         self.db.add(allocation)
-        
+
         product = self.db.get(Product, payload.product_id)
 
         # Notify exclusively the officers assigned to the target pickup hub
@@ -480,9 +485,9 @@ class DistributionService:
     def confirm_agent_handover(self, allocation_id: uuid.UUID, user_id: uuid.UUID):
         allocation = self.db.query(AgentAllocation).filter_by(id=allocation_id).first()
         if not allocation or allocation.status != "PENDING": raise HTTPException(400, "Invalid allocation.")
-            
+
         agent = self.db.query(Agent).filter_by(id=allocation.agent_id).first()
-        
+
         hub_bal = self.db.query(InventoryBalance).filter_by(location_id=agent.hub_id, product_id=allocation.product_id).with_for_update().first()
         if not hub_bal or hub_bal.quantity < allocation.quantity: raise HTTPException(400, "Insufficient Hub stock.")
         hub_bal.quantity -= allocation.quantity
@@ -496,7 +501,7 @@ class DistributionService:
 
         allocation.status = "HANDED_OVER"
         allocation.handed_over_by = user_id
-        
+
         tx = InventoryTransaction(
             product_id=allocation.product_id, transaction_type="TRANSFER",
             from_location_type="HUB", from_location_id=agent.hub_id,
@@ -511,14 +516,14 @@ class DistributionService:
     def record_agent_sale(self, payload: AgentSaleCreate, user_id: uuid.UUID):
         agent = self.db.query(Agent).filter_by(id=payload.agent_id).first()
         if not agent: raise HTTPException(404, "Agent not found")
-        
+
         agent_bal = self.db.query(InventoryBalance).filter_by(location_id=agent.id, product_id=payload.product_id).with_for_update().first()
         if not agent_bal or agent_bal.quantity < payload.quantity: raise HTTPException(400, "Agent lacks sufficient stock.")
         agent_bal.quantity -= payload.quantity
-        
+
         sale = AgentSale(agent_id=agent.id, product_id=payload.product_id, quantity=payload.quantity, recorded_by=user_id)
         self.db.add(sale)
-        
+
         tx = InventoryTransaction(
             product_id=payload.product_id, transaction_type="DISPATCH",
             from_location_type="AGENT", from_location_id=agent.id,
@@ -538,36 +543,42 @@ class DistributionService:
         agent_bal = self.db.query(InventoryBalance).filter_by(
             location_type="AGENT", location_id=agent.id, product_id=payload.product_id
         ).with_for_update().first()
-        
-        if not agent_bal or agent_bal.quantity < payload.quantity: 
+
+        if not agent_bal or agent_bal.quantity < payload.quantity:
             raise HTTPException(400, f"Agent {agent.name} does not have enough of this stock in their backpack to return.")
-        
+
         agent_bal.quantity -= payload.quantity
 
-        # 3. Add back to the TARGET Hub (Where they walked in)
+        # 3. Add back to the TARGET Hub
         hub_bal = self.db.query(InventoryBalance).filter_by(
             location_type="HUB", location_id=payload.target_hub_id, product_id=payload.product_id
         ).first()
-        
+
         if not hub_bal:
-            hub_bal = InventoryBalance(id=uuid.uuid4(), product_id=payload.product_id, location_type="HUB", location_id=payload.target_hub_id, quantity=payload.quantity)
+            hub_bal = InventoryBalance(
+                id=uuid.uuid4(), product_id=payload.product_id, location_type="HUB",
+                location_id=payload.target_hub_id, quantity=payload.quantity,
+                reserved_quantity=payload.quantity if payload.condition == "DAMAGED" else 0
+            )
             self.db.add(hub_bal)
         else:
             hub_bal.quantity += payload.quantity
+            # If it's damaged, lock it in the reserved column so it cannot be sold
+            if payload.condition == "DAMAGED":
+                hub_bal.reserved_quantity += payload.quantity
 
         # 4. Log the Return Transaction
         tx = InventoryTransaction(
             id=uuid.uuid4(),
-            product_id=payload.product_id, transaction_type="TRANSFER",
-            from_location_type="AGENT", from_location_id=agent.id,
-            to_location_type="HUB", to_location_id=payload.target_hub_id,
-            quantity=payload.quantity, created_by=user_id, notes=f"Walk-in return processed for {agent.name}"
+            product_id=payload.product_id, transaction_type=TransactionType.TRANSFER,
+            from_location_type=LocationType.AGENT, from_location_id=agent.id,
+            to_location_type=LocationType.HUB, to_location_id=payload.target_hub_id,
+            quantity=payload.quantity, created_by=user_id,
+            notes=f"Walk-in return ({payload.condition}). Reason: {payload.reason}"
         )
         self.db.add(tx)
         self.db.commit()
         return tx
-
-    # ---- UPDATED INVESTIGATIONS LOGIC ----
 
     def get_all_disputes(self):
         disputes = self.db.query(DeliveryDispute).order_by(DeliveryDispute.created_at.desc()).all()
@@ -585,14 +596,14 @@ class DistributionService:
         # 1. Initiate Investigation
         if action == "INVESTIGATE":
             dispute.status = "INVESTIGATING"
-            
+
         # 2. Recover Missing Units to Inventory
         elif action == "MARK_FOUND":
             dispute.status = "RESOLVED_RECOVERED"
             if dispute.missing_quantity > 0:
                 location_type = None
                 location_id = None
-                
+
                 # Figure out where these units were supposed to go
                 if dispute.dispatch_order_id:
                     dispatch = self.db.query(DispatchOrder).filter_by(id=dispute.dispatch_order_id).first()
@@ -621,11 +632,11 @@ class DistributionService:
                         reference_type="dispute_recovery",
                         notes=f"Recovered {dispute.missing_quantity} missing units from investigation."
                     )
-                    
+
         # 3. Return Damaged Units to Factory
         elif action == "RETURN_FACTORY":
             dispute.status = "RESOLVED_RETURNED"
-            
+
         # 4. Give up and formally write off the ledger
         elif action == "WRITE_OFF":
             dispute.status = "RESOLVED_LOST"
@@ -637,3 +648,290 @@ class DistributionService:
         self.db.commit()
         self.db.refresh(dispute)
         return dispute
+
+    def initiate_hub_transfer(self, payload: HubTransferCreate, current_user: User):
+        if payload.source_hub_id == payload.destination_hub_id:
+            raise HTTPException(400, "Source and destination hubs cannot be the same.")
+
+        source_hub = self.db.get(Hub, payload.source_hub_id)
+        dest_hub = self.db.get(Hub, payload.destination_hub_id)
+        product = self.db.get(Product, payload.product_id)
+
+        if not source_hub or not dest_hub or not product:
+            raise HTTPException(404, "Invalid Hub or Product IDs.")
+
+        # 1. Verify Stock (Warning only, do not deduct yet)
+        source_bal = self.db.query(InventoryBalance).filter_by(
+            location_type=LocationType.HUB, location_id=payload.source_hub_id, product_id=payload.product_id
+        ).with_for_update().first()
+
+        if not source_bal or source_bal.quantity < payload.quantity:
+            raise HTTPException(400, f"Insufficient stock. {source_hub.name} only has {source_bal.quantity if source_bal else 0} units available.")
+
+        # 2. Create the Tracked Dispatch Order as DRAFT
+        dispatch = DispatchOrder(
+            id=uuid.uuid4(),
+            allocation_request_id=None,
+            product_id=payload.product_id,
+            dispatched_by=current_user.id,
+            quantity=payload.quantity,
+            status="DRAFT", # <--- DRAFT STATUS
+            from_location_type=LocationType.HUB,
+            from_location_id=payload.source_hub_id,
+            to_location_type=LocationType.HUB,
+            to_location_id=payload.destination_hub_id
+        )
+        self.db.add(dispatch)
+
+        # 3. Notify the Source Hub Officers that they have a pending dispatch
+        source_officers = self.db.scalars(select(User).where(User.assigned_hub_id == payload.source_hub_id, User.is_active == True)).all()
+        for officer in source_officers:
+            create_system_notification(
+                db=self.db,
+                user_id=officer.id,
+                title="Pending Outbound Transfer",
+                message=f"Distribution initiated a transfer of {payload.quantity} {product.name} to {dest_hub.name}. Please dispatch the truck.",
+                reference_id=str(dispatch.id),
+                reference_type="dispatch_order",
+                url="/hubs"
+            )
+
+        self.db.commit()
+        self.db.refresh(dispatch)
+        return dispatch
+
+    def execute_hub_transfer(self, dispatch_id: uuid.UUID, current_user: User):
+        dispatch = self.db.get(DispatchOrder, dispatch_id)
+        if not dispatch or dispatch.status != "DRAFT":
+            raise HTTPException(404, "Valid pending transfer not found.")
+
+        # 1. Lock and Verify Physical Stock again
+        source_bal = self.db.query(InventoryBalance).filter_by(
+            location_type=LocationType.HUB, location_id=dispatch.from_location_id, product_id=dispatch.product_id
+        ).with_for_update().first()
+
+        if not source_bal or source_bal.quantity < dispatch.quantity:
+            raise HTTPException(400, "Insufficient stock at the source hub to physically dispatch this transfer.")
+
+        # 2. Deduct from Source Hub
+        source_bal.quantity -= dispatch.quantity
+        dispatch.status = "DISPATCHED"
+
+        product = self.db.get(Product, dispatch.product_id)
+        source_hub = self.db.get(Hub, dispatch.from_location_id)
+        dest_hub = self.db.get(Hub, dispatch.to_location_id)
+
+        # 3. Write immutable log
+        tx = InventoryTransaction(
+            id=uuid.uuid4(),
+            product_id=dispatch.product_id,
+            transaction_type=TransactionType.DISPATCH,
+            from_location_type=LocationType.HUB,
+            from_location_id=dispatch.from_location_id,
+            to_location_type=LocationType.HUB,
+            to_location_id=dispatch.to_location_id,
+            quantity=dispatch.quantity,
+            created_by=current_user.id,
+            notes=f"Lateral Hub Transfer: Dispatched {dispatch.quantity} units of {product.name if product else 'Product'} from {source_hub.name if source_hub else 'Source'} to {dest_hub.name if dest_hub else 'Destination'}."
+        )
+        self.db.add(tx)
+
+        # 4. Notify Destination Hub that the truck is on the way
+        dest_officers = self.db.scalars(select(User).where(User.assigned_hub_id == dispatch.to_location_id, User.is_active == True)).all()
+        for officer in dest_officers:
+            create_system_notification(
+                db=self.db,
+                user_id=officer.id,
+                title="Incoming Hub Transfer",
+                message=f"{source_hub.name if source_hub else 'A hub'} has dispatched {dispatch.quantity} units of {product.name if product else 'Product'} to your hub.",
+                reference_id=str(dispatch.id),
+                reference_type="dispatch_order",
+                url="/hubs"
+            )
+
+        self.db.commit()
+        self.db.refresh(dispatch)
+        return dispatch
+
+    def reallocate_agent_stock(self, payload: AgentReallocationCreate, current_user: User):
+        if payload.source_agent_id == payload.destination_agent_id:
+            raise HTTPException(400, "Cannot reallocate stock to the same agent.")
+
+        source_agent = self.db.get(Agent, payload.source_agent_id)
+        dest_agent = self.db.get(Agent, payload.destination_agent_id)
+        product = self.db.get(Product, payload.product_id)
+
+        if not source_agent or not dest_agent or not product:
+            raise HTTPException(404, "Invalid Agent or Product IDs.")
+
+        # 1. Check Source Agent Stock
+        source_bal = self.db.query(InventoryBalance).filter_by(
+            location_type=LocationType.AGENT, location_id=payload.source_agent_id, product_id=payload.product_id
+        ).with_for_update().first()
+
+        if not source_bal or source_bal.quantity < payload.quantity:
+            raise HTTPException(400, f"Agent {source_agent.name} does not have enough stock in their backpack to reallocate.")
+
+        # 2. Perform the Instant Transfer
+        source_bal.quantity -= payload.quantity
+
+        dest_bal = self.db.query(InventoryBalance).filter_by(
+            location_type=LocationType.AGENT, location_id=payload.destination_agent_id, product_id=payload.product_id
+        ).first()
+
+        if not dest_bal:
+            dest_bal = InventoryBalance(
+                id=uuid.uuid4(), product_id=payload.product_id, location_type=LocationType.AGENT,
+                location_id=payload.destination_agent_id, quantity=payload.quantity
+            )
+            self.db.add(dest_bal)
+        else:
+            dest_bal.quantity += payload.quantity
+
+        # 3. Generate Highly Descriptive Log
+        descriptive_note = (
+            f"Field Reallocation: {current_user.full_name} instantly reassigned {payload.quantity} units "
+            f"of {product.name} from {source_agent.name} to {dest_agent.name}. "
+            f"Justification: {payload.reason}"
+        )
+
+        tx = InventoryTransaction(
+            id=uuid.uuid4(),
+            product_id=payload.product_id,
+            transaction_type=TransactionType.TRANSFER,
+            from_location_type=LocationType.AGENT,
+            from_location_id=payload.source_agent_id,
+            to_location_type=LocationType.AGENT,
+            to_location_id=payload.destination_agent_id,
+            quantity=payload.quantity,
+            created_by=current_user.id,
+            notes=descriptive_note
+        )
+        self.db.add(tx)
+        self.db.commit()
+        return tx
+
+    # --- Add these inside your DistributionService class ---
+
+    def dispatch_reverse_stock(self, payload: ReverseDispatchCreate, current_user: User):
+        # --- AUTO-ROUTE TO MANUFACTURER ---
+        dest_id = payload.destination_location_id
+        if payload.destination_location_type == LocationType.MANUFACTURER:
+            manufacturer = self.db.query(User).join(Role).filter(Role.code == RoleCode.MANUFACTURER).first()
+            if not manufacturer:
+                raise HTTPException(400, "Cannot dispatch: No Manufacturer account exists in the system to receive this. Please create one.")
+            dest_id = manufacturer.id
+
+        # 1. Verify Source Stock (Prioritize pulling from RESERVED/DAMAGED stock first)
+        source_bal = self.db.query(InventoryBalance).filter_by(
+            location_type=payload.source_location_type,
+            location_id=payload.source_location_id,
+            product_id=payload.product_id
+        ).with_for_update().first()
+
+        if not source_bal or source_bal.quantity < payload.quantity:
+            raise HTTPException(400, "Insufficient stock at the source location to initiate this return.")
+
+        # 2. THE FIX: Universally deduct from Source (Drain the reserved damaged pile first, for BOTH Hubs and Warehouses)
+        deduct_from_reserved = min(source_bal.reserved_quantity, payload.quantity)
+        source_bal.reserved_quantity -= deduct_from_reserved
+        source_bal.quantity -= payload.quantity
+
+        # 3. Create the Tracked Dispatch Order
+        dispatch = DispatchOrder(
+            id=uuid.uuid4(),
+            allocation_request_id=None,
+            product_id=payload.product_id,
+            dispatched_by=current_user.id,
+            quantity=payload.quantity,
+            status="DISPATCHED",
+            from_location_type=payload.source_location_type,
+            from_location_id=payload.source_location_id,
+            to_location_type=payload.destination_location_type,
+            to_location_id=dest_id  # <-- Uses the auto-resolved ID
+        )
+        self.db.add(dispatch)
+
+        product = self.db.get(Product, payload.product_id)
+
+        # 4. Generate Highly Descriptive Log
+        tx = InventoryTransaction(
+            id=uuid.uuid4(),
+            product_id=payload.product_id,
+            transaction_type=TransactionType.DISPATCH,
+            from_location_type=payload.source_location_type,
+            from_location_id=payload.source_location_id,
+            to_location_type=payload.destination_location_type,
+            to_location_id=dest_id,
+            quantity=payload.quantity,
+            created_by=current_user.id,
+            notes=f"Reverse Logistics Dispatch: {payload.quantity} units of {product.name if product else 'Product'}. Reason: {payload.reason}"
+        )
+        self.db.add(tx)
+
+        # 5. Notify the Target Destination
+        target_role = RoleCode.WAREHOUSE_OFFICER if payload.destination_location_type == LocationType.WAREHOUSE else RoleCode.MANUFACTURER
+        self._notify_role(
+            target_role,
+            "Incoming Reverse Logistics",
+            f"A return shipment of {payload.quantity} units of {product.name if product else 'Product'} has been dispatched to your location.",
+            str(dispatch.id),
+            "dispatch_order"
+        )
+
+        self.db.commit()
+        self.db.refresh(dispatch)
+        return dispatch
+
+
+    def receive_reverse_stock(self, payload: ReverseReceiptCreate, current_user: User):
+        dispatch = self.db.query(DispatchOrder).filter_by(id=payload.dispatch_order_id).first()
+        if not dispatch: raise HTTPException(404, "Dispatch order not found.")
+        if dispatch.status in ["RECEIVED", "PARTIALLY_RECEIVED"]:
+            raise HTTPException(400, "This return shipment has already been processed.")
+
+        if payload.quantity_received != dispatch.quantity:
+            raise HTTPException(400, f"Accountability mismatch. Expected {dispatch.quantity} units.")
+
+        dispatch.status = "RECEIVED"
+
+        # 1. Add Stock to Destination
+        dest_bal = self.db.query(InventoryBalance).filter_by(
+            location_type=dispatch.to_location_type,
+            location_id=dispatch.to_location_id,
+            product_id=dispatch.product_id
+        ).first()
+
+        if not dest_bal:
+            dest_bal = InventoryBalance(
+                id=uuid.uuid4(), product_id=dispatch.product_id,
+                location_type=dispatch.to_location_type, location_id=dispatch.to_location_id,
+                quantity=payload.quantity_received,
+                # If it goes to the warehouse, keep it quarantined in 'reserved' so they don't sell it!
+                reserved_quantity=payload.quantity_received if dispatch.to_location_type == LocationType.WAREHOUSE else 0
+            )
+            self.db.add(dest_bal)
+        else:
+            dest_bal.quantity += payload.quantity_received
+            if dispatch.to_location_type == LocationType.WAREHOUSE:
+                dest_bal.reserved_quantity += payload.quantity_received
+
+        # 2. Log the Receipt
+        product = self.db.get(Product, dispatch.product_id)
+        tx = InventoryTransaction(
+            id=uuid.uuid4(),
+            product_id=dispatch.product_id,
+            transaction_type=TransactionType.RECEIPT,
+            from_location_type=dispatch.from_location_type,
+            from_location_id=dispatch.from_location_id,
+            to_location_type=dispatch.to_location_type,
+            to_location_id=dispatch.to_location_id,
+            quantity=payload.quantity_received,
+            created_by=current_user.id,
+            notes=f"Reverse Logistics Received: Confirmed receipt of {payload.quantity_received} returned units of {product.name if product else 'Product'}. Notes: {payload.notes}"
+        )
+        self.db.add(tx)
+
+        self.db.commit()
+        self.db.refresh(dispatch)
+        return dispatch

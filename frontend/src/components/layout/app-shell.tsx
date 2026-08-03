@@ -28,19 +28,19 @@ type Notification = {
 export function AppShell({ title, description, children }: { title: string; description: string; children: ReactNode; }) {
   const router = useRouter();
   const { accessToken, userRole, email, mustChangePassword, isOverrideEnabled, setAccessToken, setOverrideEnabled } = useAuthStore();
-  
+
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  
+
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isDesktopCollapsed, setIsDesktopCollapsed] = useState(false);
-  
+
   const [expandedNotifs, setExpandedNotifs] = useState<Set<string>>(new Set());
   const notifRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -113,7 +113,7 @@ export function AppShell({ title, description, children }: { title: string; desc
     setError(null);
     if (newPassword !== confirmPassword) return setError("New passwords do not match.");
     if (newPassword.length < 8) return setError("Password must be at least 8 characters long.");
-    
+
     setIsSubmitting(true);
     try {
       const response = await api.post<{ access_token: string }>("/auth/change-password", {
@@ -148,17 +148,17 @@ export function AppShell({ title, description, children }: { title: string; desc
 
   return (
     <main className="flex min-h-screen bg-[#eef2f6]">
-      <Sidebar 
-        isOpen={isMobileMenuOpen} 
-        isCollapsed={isDesktopCollapsed} 
-        onClose={() => setIsMobileMenuOpen(false)} 
+      <Sidebar
+        isOpen={isMobileMenuOpen}
+        isCollapsed={isDesktopCollapsed}
+        onClose={() => setIsMobileMenuOpen(false)}
         onToggleCollapse={() => setIsDesktopCollapsed(!isDesktopCollapsed)}
       />
 
       <section className="min-w-0 flex-1 flex flex-col h-screen">
         <header className="flex h-16 shrink-0 items-center justify-between border-b border-line bg-white px-4 lg:px-8">
           <div className="flex items-center gap-3">
-            
+
             {/* The desktop hamburger has been removed! This is strictly for mobile viewing. */}
             <button
               onClick={() => setIsMobileMenuOpen(true)}

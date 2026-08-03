@@ -17,7 +17,7 @@ class RoleRead(BaseModel):
 
 class UserRead(BaseModel):
     id: uuid.UUID
-    email: EmailStr
+    email: str
     full_name: str
     role: RoleRead
     is_active: bool

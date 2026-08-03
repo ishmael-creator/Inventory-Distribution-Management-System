@@ -2,7 +2,7 @@
 
 import { useMemo, useState, Fragment } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ClipboardCheck, Boxes, Settings2, ChevronDown, ChevronUp, Store, Trash2, AlertOctagon, Search, Check, Truck, X } from "lucide-react";
+import { ClipboardCheck, Boxes, Settings2, ChevronDown, ChevronUp, Store, Trash2, AlertOctagon, Search, Check, Truck, ArrowRightLeft } from "lucide-react";
 
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionButton } from "@/components/ui/action-button";
@@ -33,10 +33,10 @@ function requestLabel(request: AllocationRequest, dispatch?: DispatchOrder) {
 export default function DistributionPage() {
   const queryClient = useQueryClient();
   const userRole = useAuthStore((state) => state.userRole);
-  
+
   const [showAdminTools, setShowAdminTools] = useState(false);
   const [isRequestFormOpen, setIsRequestFormOpen] = useState(false);
-  
+
   const [hubForm, setHubForm] = useState({ name: "", location: "" });
   const [requestForm, setRequestForm] = useState({ product_id: "", hub_id: "", quantity: "100", notes: "" });
   const [error, setError] = useState<string | null>(null);
@@ -46,11 +46,12 @@ export default function DistributionPage() {
   const hubs = useQuery({ queryKey: ["hubs"], queryFn: async () => (await api.get<HubRecord[]>("/distribution/hubs")).data });
   const requests = useQuery({ queryKey: ["distribution-requests"], queryFn: async () => (await api.get<AllocationRequest[]>("/distribution/requests")).data });
   const dispatches = useQuery({ queryKey: ["dispatches"], queryFn: async () => (await api.get<DispatchOrder[]>("/distribution/dispatches")).data });
+
   const warehouseBalances = useQuery({ queryKey: ["warehouse-balances"], queryFn: async () => (await api.get<InventoryBalance[]>("/inventory/balances?location_type=WAREHOUSE")).data });
   const hubBalances = useQuery({ queryKey: ["hub-balances"], queryFn: async () => (await api.get<InventoryBalance[]>("/inventory/balances?location_type=HUB")).data });
 
-  const disputes = useQuery({ 
-    queryKey: ["disputes"], 
+  const disputes = useQuery({
+    queryKey: ["disputes"],
     queryFn: async () => (await api.get<any[]>("/distribution/disputes")).data,
     enabled: userRole === "SUPER_ADMIN" || userRole === "MANAGER"
   });
@@ -58,7 +59,13 @@ export default function DistributionPage() {
   const productNameById = useMemo(() => new Map((products.data?.items ?? []).map((item) => [item.id, item.name])), [products.data?.items]);
   const hubNameById = useMemo(() => new Map((hubs.data ?? []).map((item) => [item.id, item.name])), [hubs.data]);
   const dispatchByRequestId = useMemo(() => new Map((dispatches.data ?? []).filter((d) => d.allocation_request_id).map((d) => [d.allocation_request_id, d])), [dispatches.data]);
-  
+
+  // THE FIX: Isolate Lateral Hub Transfers for Tracking
+  const lateralTransfers = useMemo(() => {
+    return (dispatches.data ?? []).filter(d => d.from_location_type === "HUB" && d.to_location_type === "HUB")
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [dispatches.data]);
+
   const centralWarehouse = warehouses.data?.[0];
 
   const createHub = useMutation({
@@ -90,9 +97,8 @@ export default function DistributionPage() {
     onError: (err: any) => setError(err.response?.data?.detail || "Failed to delete hub.")
   });
 
-  // NEW: Advanced Dispute Resolution
   const resolveDispute = useMutation({
-    mutationFn: async ({ id, action, notes }: { id: string, action: string, notes: string }) => 
+    mutationFn: async ({ id, action, notes }: { id: string, action: string, notes: string }) =>
       api.post(`/distribution/disputes/${id}/resolve`, { action, notes }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["disputes"] });
@@ -128,6 +134,7 @@ export default function DistributionPage() {
               {isRequestFormOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
             </div>
           </button>
+
           {isRequestFormOpen && (
             <div className="border-t border-line bg-slate-50/50 p-6">
               <form onSubmit={(e) => { e.preventDefault(); createRequest.mutate(); }}>
@@ -208,8 +215,55 @@ export default function DistributionPage() {
         </section>
       </div>
 
+      {/* NEW: LATERAL HUB TRANSFERS TRACKING */}
       <section className="mt-6 rounded-md border border-line bg-white shadow-sm">
-        <div className="border-b border-line px-4 py-3"><h2 className="text-sm font-semibold text-ink">Distribution Tracking</h2></div>
+        <div className="flex items-center gap-2 border-b border-line px-4 py-3 bg-amber-50/50">
+          <ArrowRightLeft className="h-5 w-5 text-amber-600" />
+          <h2 className="text-sm font-semibold text-amber-900">Lateral Hub Transfers (In Transit & Completed)</h2>
+        </div>
+        <div className="overflow-x-auto max-h-80">
+          <table className="w-full min-w-[900px] text-left text-sm">
+            <thead className="bg-panel text-xs uppercase text-slate-500 sticky top-0">
+              <tr>
+                <th className="px-4 py-3">Date</th>
+                <th className="px-4 py-3">Product</th>
+                <th className="px-4 py-3">Origin Hub</th>
+                <th className="px-4 py-3">Destination Hub</th>
+                <th className="px-4 py-3">Qty</th>
+                <th className="px-4 py-3 text-center">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {lateralTransfers.map((transfer) => {
+                const isDispatched = transfer.status === "DISPATCHED";
+                return (
+                  <tr key={transfer.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-3 text-slate-500">{new Date(transfer.created_at).toLocaleDateString()}</td>
+                    <td className="px-4 py-3 font-medium text-ink">{productNameById.get(transfer.product_id) ?? "Unknown"}</td>
+                    <td className="px-4 py-3 text-slate-600">{hubNameById.get(transfer.from_location_id) ?? "Unknown"}</td>
+                    <td className="px-4 py-3 font-semibold text-ink">{hubNameById.get(transfer.to_location_id) ?? "Unknown"}</td>
+                    <td className="px-4 py-3 font-bold text-slate-700">{transfer.quantity}</td>
+                    <td className="px-4 py-3 text-center">
+                      <StatusBadge tone={isDispatched ? "warning" : transfer.status === "RECEIVED" ? "success" : "neutral"}>
+                        {isDispatched ? "IN TRANSIT" : transfer.status.replaceAll("_", " ")}
+                      </StatusBadge>
+                    </td>
+                  </tr>
+                );
+              })}
+              {lateralTransfers.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-slate-500">No lateral hub transfers recorded yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* ORIGINAL DISTRIBUTION TRACKING (Warehouse to Hub) */}
+      <section className="mt-6 rounded-md border border-line bg-white shadow-sm">
+        <div className="border-b border-line px-4 py-3"><h2 className="text-sm font-semibold text-ink">Central Warehouse ➔ Hub Tracking</h2></div>
         <div className="overflow-x-auto max-h-80">
           <table className="w-full min-w-[900px] text-left text-sm">
             <thead className="bg-panel text-xs uppercase text-slate-500 sticky top-0">
@@ -242,7 +296,6 @@ export default function DistributionPage() {
               <span className="ml-2 rounded-full bg-red-200 px-2 py-0.5 text-xs font-bold text-red-800">{activeDisputes.length} Active</span>
             </div>
           </div>
-          
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 text-xs uppercase text-slate-500 border-b border-line">
@@ -288,7 +341,7 @@ export default function DistributionPage() {
                     </td>
                   </tr>
                 ))}
-                
+
                 {/* RESOLVED LOG */}
                 {resolvedDisputes.map((dispute) => (
                   <tr key={dispute.id} className="bg-slate-100 opacity-60">

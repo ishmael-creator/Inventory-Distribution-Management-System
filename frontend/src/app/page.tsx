@@ -50,7 +50,7 @@ export default function DashboardPage() {
     mutationFn: async () => api.post("/inventory/factory-reset"),
     onSuccess: async () => {
       alert("System operations have been completely reset to zero.");
-      await queryClient.invalidateQueries(); 
+      await queryClient.invalidateQueries();
       window.location.reload(); // Hard refresh to wipe the slate clean visually
     },
     onError: (err: any) => alert(err.response?.data?.detail || "Reset failed")
@@ -59,7 +59,7 @@ export default function DashboardPage() {
   const productNameById = useMemo(() => new Map((products.data?.items ?? []).map((p) => [p.id, p.name])), [products.data?.items]);
 
   // Strict Dashboard Blinders for Stock Labels
-  const stockLabel = (userRole === "SUPER_ADMIN" || userRole === "MANAGER") ? "Global Active Stock" 
+  const stockLabel = (userRole === "SUPER_ADMIN" || userRole === "MANAGER") ? "Global Active Stock"
                    : userRole === "MANUFACTURER" ? "Current Factory Stock"
                    : userRole === "WAREHOUSE_OFFICER" ? "Current Warehouse Stock"
                    : userRole === "HUB_OFFICER" ? "Current Hub Stock"
@@ -68,7 +68,7 @@ export default function DashboardPage() {
   // Strict Dashboard Blinders for Stock Data
   const stockDistribution = useMemo(() => {
     let data = balances.data ?? [];
-    
+
     // Wipe out global data based on role
     if (userRole === "MANUFACTURER") {
       data = data.filter(b => b.location_type === "MANUFACTURER");
@@ -84,7 +84,7 @@ export default function DashboardPage() {
       acc[curr.location_type] = (acc[curr.location_type] || 0) + curr.quantity;
       return acc;
     }, {} as Record<string, number>);
-    
+
     return Object.entries(grouped).map(([name, value]) => ({ name, value }));
   }, [balances.data, userRole]);
 
@@ -124,7 +124,7 @@ export default function DashboardPage() {
        acc[tx.product_id] = (acc[tx.product_id] || 0) + tx.quantity;
        return acc;
     }, {} as Record<string, number>);
-    
+
     return Object.entries(grouped).map(([id, qty]) => ({
        product: productNameById.get(id) || "Unknown Product",
        quantity: qty
@@ -149,7 +149,7 @@ export default function DashboardPage() {
 
   return (
     <AppShell title={dynamicTitle} description="Role-specific overview of your inventory operations.">
-      
+
       <section className="mb-6 flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-2 text-brand font-semibold">
           <Calendar className="h-5 w-5" /> Filter Metrics:

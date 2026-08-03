@@ -29,19 +29,19 @@ export default function HubAgentsPage() {
   // Dynamic filtering logic
   const activeAgents = useMemo(() => {
     let list = agents.data ?? [];
-    
-    // THE GHOSTING RULE: If you are a Hub Officer, you only see agents assigned to your Hub 
+
+    // THE GHOSTING RULE: If you are a Hub Officer, you only see agents assigned to your Hub
     // AND who are currently holding stock. Once they hit 0 stock, they ghost!
     if (userRole === "HUB_OFFICER") {
       // Find the Hub Officer's actual assigned Hub ID from their profile (or default to the filter they clicked)
-      const myHub = filterHubId || list[0]?.hub_id; 
-      
+      const myHub = filterHubId || list[0]?.hub_id;
+
       list = list.filter(agent => {
         const isAtMyHub = agent.hub_id === myHub;
-        
+
         // Check if they have ANY positive balance in their backpack
         const hasStock = (balances.data ?? []).some(b => b.location_id === agent.id && b.quantity > 0);
-        
+
         return isAtMyHub && hasStock;
       });
     }
@@ -53,18 +53,18 @@ export default function HubAgentsPage() {
         a.agent_code.toLowerCase().includes(lowerQ)
       );
     }
-    
+
     // Allow Distribution team to filter manually
     if (filterHubId && userRole !== "HUB_OFFICER") {
       list = list.filter(a => a.hub_id === filterHubId);
     }
-    
+
     return list;
   }, [agents.data, searchQuery, filterHubId, balances.data, userRole]);
 
   return (
     <AppShell title="Hub Agents Directory" description="Live overview of the field agents and their current holding stock.">
-      
+
       {/* FILTER BAR */}
       <div className="mb-6 flex flex-wrap gap-4 items-end rounded-md border border-line bg-white p-4 shadow-sm">
         <div className="flex-1 min-w-[200px]">
@@ -79,7 +79,7 @@ export default function HubAgentsPage() {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
-        
+
         {/* Only show Hub Filter to higher roles, Hub Officers are already isolated */}
         {userRole !== "HUB_OFFICER" && (
           <div className="w-full md:w-64">
@@ -107,7 +107,7 @@ export default function HubAgentsPage() {
               <th className="px-4 py-3">Agent Name</th>
               {/* THE FIX: Swapped Hub Location for Region */}
               {userRole !== "HUB_OFFICER" && <th className="px-4 py-3">Region</th>}
-              
+
               {/* Dynamically render a column for EVERY product in the system */}
               {activeProducts.map(p => (
                 <th key={p.id} className="px-4 py-3 text-right">{p.name}</th>
@@ -132,7 +132,7 @@ export default function HubAgentsPage() {
                   >
                     <td className="px-4 py-3 font-mono text-xs font-bold text-slate-500 group-hover:text-brand">{agent.agent_code}</td>
                     <td className="px-4 py-3 font-semibold text-ink">{agent.name}</td>
-                    
+
                     {/* THE FIX: Display the new Region data instead of the Hub Name */}
                     {userRole !== "HUB_OFFICER" && (
                       <td className="px-4 py-3">
@@ -174,7 +174,7 @@ export default function HubAgentsPage() {
 
           {/* The Sidebar Drawer */}
           <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-white shadow-2xl transform transition-transform duration-300 flex flex-col border-l border-line">
-            
+
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-line bg-slate-50">
               <div className="flex items-center gap-3">
@@ -196,7 +196,7 @@ export default function HubAgentsPage() {
 
             {/* Sidebar Content */}
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              
+
               {/* Agent Information Block */}
               <div>
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Assignment Details</h3>
@@ -233,7 +233,7 @@ export default function HubAgentsPage() {
                       {activeProducts.map(product => {
                         const bal = (balances.data ?? []).find(b => b.location_id === selectedAgent.id && b.product_id === product.id);
                         const qty = bal ? bal.quantity : 0;
-                        
+
                         if (qty === 0) return null; // Only show products they actually have in the side-bar
 
                         return (

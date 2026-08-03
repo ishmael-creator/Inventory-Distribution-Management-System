@@ -41,6 +41,13 @@ def run_seed():
             "products.read", "warehouses.read", "hubs.read", "distribution.requests.read",
             "manufacturing.read_all", "manufacturing.read", "inventory.read", "dispatches.read"
         ],
+        "REGIONAL_MANAGER": [
+            "products.read",
+            "inventory.read",
+            "hubs.read",
+            "distribution.requests.read",
+            "dispatches.read"  # <-- THE FIX: Grants visibility to lateral transfers
+        ],
         "HUB_OFFICER": [
             "products.read", "hubs.read", "inventory.read", "dispatches.read", "hub.receipts.write"
         ],

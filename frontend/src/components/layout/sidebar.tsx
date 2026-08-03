@@ -22,14 +22,14 @@ const items = [
   { label: "User Management", href: "/users", icon: Users, roles: ["SUPER_ADMIN"] },
 ];
 
-export function Sidebar({ 
-  isOpen = false, 
-  isCollapsed = false, 
+export function Sidebar({
+  isOpen = false,
+  isCollapsed = false,
   onClose = () => {},
   onToggleCollapse = () => {} // <-- NEW ACTION
-}: { 
-  isOpen?: boolean; 
-  isCollapsed?: boolean; 
+}: {
+  isOpen?: boolean;
+  isCollapsed?: boolean;
   onClose?: () => void;
   onToggleCollapse?: () => void;
 }) {
@@ -50,9 +50,9 @@ export function Sidebar({
         isOpen ? "translate-x-0" : "-translate-x-full",
         isCollapsed ? "lg:w-20 w-72" : "w-72"
       )}>
-        
+
         {/* NEW CLICKABLE BRAND HEADER WITH SVG LOGO */}
-        <div 
+        <div
           onClick={onToggleCollapse}
           title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
           className={clsx(
@@ -69,7 +69,7 @@ export function Sidebar({
               <path d="M50 50 L90 30 L90 70 L50 90 Z" fill="#0f766e" opacity="0.6"/>
               <path d="M50 25 L35 55 L50 55 L50 75 L65 45 L50 45 Z" fill="#ffffff"/>
             </svg>
-            
+
             {!isCollapsed && (
               <div>
                 <div className="text-xs font-bold uppercase tracking-wider text-brand">UPE-IMS</div>
@@ -77,7 +77,7 @@ export function Sidebar({
               </div>
             )}
           </div>
-          
+
           {/* Mobile close button prevents trapping users */}
           {!isCollapsed && (
             <button onClick={(e) => { e.stopPropagation(); onClose(); }} className="lg:hidden p-1 text-slate-500 hover:bg-slate-100 rounded-md">

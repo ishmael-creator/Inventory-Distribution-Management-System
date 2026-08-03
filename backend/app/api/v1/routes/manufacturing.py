@@ -6,7 +6,7 @@ from app.utils.push_notifier import create_system_notification
 from app.api.deps import get_current_user, require_permissions
 # THE FIX: Added RoleCode to imports
 from app.core.enums import BatchStatus, LocationType, TransactionType, RoleCode
-from app.models.inventory import InventoryBalance, InventoryTransaction
+from app.models.inventory import DispatchOrder, InventoryBalance, InventoryTransaction
 from app.db.session import get_db
 from app.models.product import ProductBatch
 # THE FIX: Added Role and Notification to imports
@@ -14,6 +14,7 @@ from app.models.user import User, Role
 from app.models.notification import Notification
 from app.schemas.manufacturing import ProductBatchCreate, ProductBatchRead, BatchReleaseRequest
 from app.services.manufacturing_service import ManufacturingService
+from app.schemas.distribution import DispatchOrderRead
 
 router = APIRouter()
 
@@ -22,9 +23,19 @@ def list_batches(
     current_user: User = Depends(require_permissions("manufacturing.read")),
     db: Session = Depends(get_db),
 ) -> list[ProductBatch]:
+    # THE FIX: Removed the strict filter so Manufacturers can see batches created by Super Admins!
     query = select(ProductBatch).order_by(ProductBatch.created_at.desc()).limit(100)
-    if "manufacturing.read_all" not in current_user.role.permissions and "*" not in current_user.role.permissions:
-        query = query.where(ProductBatch.manufacturer_id == current_user.id)
+    return list(db.scalars(query).all())
+
+# THE FIX: A dedicated endpoint so the Factory can see returns without needing global distribution permissions
+@router.get("/returns", response_model=list[DispatchOrderRead])
+def list_factory_returns(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = select(DispatchOrder).where(
+        DispatchOrder.to_location_type == LocationType.MANUFACTURER
+    ).order_by(DispatchOrder.created_at.desc())
     return list(db.scalars(query).all())
 
 @router.post("/batches", response_model=ProductBatchRead, status_code=201)
@@ -90,37 +101,21 @@ def receive_batch_at_warehouse(
     )
     db.add(tx)
 
-    # =======================================================
-    # ASYNC NOTIFICATIONS VIA BACKGROUND WORKER
-    # =======================================================
-    # 1. Notify the Manufacturer
     background_tasks.add_task(
-        create_system_notification,
-        db=db,
-        user_id=batch.manufacturer_id,
+        create_system_notification, db=db, user_id=batch.manufacturer_id,
         title="Batch Received at Warehouse",
         message=f"Your batch {batch.batch_number} ({batch.quantity} units) has been successfully received at the central warehouse.",
-        reference_id=str(batch.id),
-        reference_type="product_batch",
-        url="/manufacturing"
+        reference_id=str(batch.id), reference_type="product_batch", url="/manufacturing"
     )
 
-    # 2. Notify active Distribution Team members
-    dist_users = db.scalars(
-        select(User).join(Role).where(Role.code == RoleCode.DISTRIBUTION_TEAM, User.is_active == True)
-    ).all()
+    dist_users = db.scalars(select(User).join(Role).where(Role.code == RoleCode.DISTRIBUTION_TEAM, User.is_active == True)).all()
     for dist_user in dist_users:
         background_tasks.add_task(
-            create_system_notification,
-            db=db,
-            user_id=dist_user.id,
+            create_system_notification, db=db, user_id=dist_user.id,
             title="New Stock Available",
             message=f"Batch {batch.batch_number} ({batch.quantity} units) has arrived at the central warehouse and is ready for distribution.",
-            reference_id=str(batch.id),
-            reference_type="product_batch",
-            url="/distribution"
+            reference_id=str(batch.id), reference_type="product_batch", url="/distribution"
         )
-    # =======================================================
 
     db.commit()
     return {"status": "success", "message": "Batch officially received into Warehouse!"}

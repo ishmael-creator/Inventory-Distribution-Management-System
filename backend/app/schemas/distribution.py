@@ -110,6 +110,8 @@ class AgentReturnCreate(BaseModel):
     product_id: uuid.UUID
     quantity: int
     target_hub_id: uuid.UUID
+    condition: str = "GOOD"  # "GOOD" or "DAMAGED"
+    reason: str
 
 # ---- UPDATED FOR INVESTIGATIONS BOARD ----
 
@@ -125,11 +127,43 @@ class DisputeRead(BaseModel):
     notes: str | None
     created_at: datetime
     # We add this so we can easily show the resolver who reported it in the UI
-    reporter_name: str | None = None 
-    
+    reporter_name: str | None = None
+
     model_config = {"from_attributes": True}
 
 class DisputeResolve(BaseModel):
     # This changes from 'status' to 'action' to support logic-based resolution
     action: str  # INVESTIGATE, MARK_FOUND, RETURN_FACTORY, WRITE_OFF
     notes: str | None = None # Required now for the audit trail
+
+# --- Add to the bottom of backend/app/schemas/distribution.py ---
+
+class HubTransferCreate(BaseModel):
+    source_hub_id: uuid.UUID
+    destination_hub_id: uuid.UUID
+    product_id: uuid.UUID
+    quantity: int = Field(gt=0)
+    reason: str
+
+class AgentReallocationCreate(BaseModel):
+    source_agent_id: uuid.UUID
+    destination_agent_id: uuid.UUID
+    product_id: uuid.UUID
+    quantity: int = Field(gt=0)
+    reason: str
+
+# --- Add to the bottom of backend/app/schemas/distribution.py ---
+
+class ReverseDispatchCreate(BaseModel):
+    source_location_type: LocationType
+    source_location_id: uuid.UUID
+    destination_location_type: LocationType
+    destination_location_id: uuid.UUID
+    product_id: uuid.UUID
+    quantity: int = Field(gt=0)
+    reason: str
+
+class ReverseReceiptCreate(BaseModel):
+    dispatch_order_id: uuid.UUID
+    quantity_received: int = Field(ge=0)
+    notes: str | None = None

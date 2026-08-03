@@ -22,7 +22,7 @@ const initialForm = {
 export default function ProductsPage() {
   const queryClient = useQueryClient();
   const { userRole, isOverrideEnabled } = useAuthStore();
-  
+
   const [form, setForm] = useState(initialForm);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -74,9 +74,9 @@ export default function ProductsPage() {
     <AppShell title="Products" description="Manage and view the system product catalog.">
       {error && <div className="mb-6 rounded-md bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{error}</div>}
       {success && <div className="mb-6 rounded-md bg-green-50 px-4 py-3 text-sm font-medium text-green-700">{success}</div>}
-      
+
       <section className={`grid gap-6 ${canCreate ? "xl:grid-cols-[420px_1fr]" : "grid-cols-1"}`}>
-        
+
         {/* CREATE PRODUCT FORM (HIDDEN UNLESS AUTHORIZED/OVERRIDDEN) */}
         {canCreate && (
           <form onSubmit={onSubmit} className="rounded-md border border-line bg-white p-4 h-fit shadow-sm">
@@ -125,7 +125,7 @@ export default function ProductsPage() {
               Refresh
             </ActionButton>
           </div>
-          
+
           <div className="overflow-x-auto">
             <table className="w-full min-w-[500px] text-left text-sm">
               <thead className="bg-panel text-xs uppercase text-slate-500">

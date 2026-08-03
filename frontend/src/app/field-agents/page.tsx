@@ -2,23 +2,31 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Store, UserPlus, ShoppingCart, Contact, Trash2 } from "lucide-react";
+import { Store, UserPlus, ShoppingCart, Contact, Trash2, ArrowRightLeft } from "lucide-react";
+
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionButton } from "@/components/ui/action-button";
 import { SelectField, TextField } from "@/components/ui/form-field";
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/stores/auth-store";
 import type { HubRecord, ProductPage, AgentRecord } from "@/types/inventory";
 
 export default function FieldAgentsPage() {
   const queryClient = useQueryClient();
+  const userRole = useAuthStore((state) => state.userRole);
 
   const [newAgentForm, setNewAgentForm] = useState({ name: "", phone: "", region: "" });
   const [agentAllocationForm, setAgentAllocationForm] = useState({ agent_id: "", hub_id: "", product_id: "", quantity: "1" });
   const [agentSaleForm, setAgentSaleForm] = useState({ agent_id: "", product_id: "", quantity: "1" });
+
+  // NEW: Agent Reallocation State
+  const [agentReallocationForm, setAgentReallocationForm] = useState({ source_agent_id: "", destination_agent_id: "", product_id: "", quantity: "1", reason: "" });
+
   const REGIONS = ["Greater Accra", "Ashanti", "Central", "Eastern", "Northern", "Western", "Volta", "Oti", "Bono", "Ahafo"];
+
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  // Add this right below your form states
+
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 20;
 
@@ -26,8 +34,6 @@ export default function FieldAgentsPage() {
   const products = useQuery({ queryKey: ["products"], queryFn: async () => (await api.get<ProductPage>("/products")).data });
   const hubs = useQuery({ queryKey: ["hubs"], queryFn: async () => (await api.get<HubRecord[]>("/distribution/hubs")).data });
   const agents = useQuery({ queryKey: ["agents"], queryFn: async () => (await api.get<AgentRecord[]>("/distribution/agents")).data });
-
-  const hubNameById = useMemo(() => new Map((hubs.data ?? []).map((item) => [item.id, item.name])), [hubs.data]);
 
   // Mutations
   const createAgent = useMutation({
@@ -44,9 +50,9 @@ export default function FieldAgentsPage() {
 
   const allocateStockToAgent = useMutation({
     mutationFn: async () => api.post("/distribution/agents/allocate", {
-      agent_id: agentAllocationForm.agent_id, 
-      hub_id: agentAllocationForm.hub_id, // THE FIX: Send the pickup hub
-      product_id: agentAllocationForm.product_id, 
+      agent_id: agentAllocationForm.agent_id,
+      hub_id: agentAllocationForm.hub_id,
+      product_id: agentAllocationForm.product_id,
       quantity: Number(agentAllocationForm.quantity)
     }),
     onSuccess: async () => {
@@ -62,16 +68,33 @@ export default function FieldAgentsPage() {
     mutationFn: async () => api.post("/distribution/agents/sales", {
       agent_id: agentSaleForm.agent_id, product_id: agentSaleForm.product_id, quantity: Number(agentSaleForm.quantity)
     }),
-    onSuccess: async () => { 
-      setAgentSaleForm({ agent_id: "", product_id: "", quantity: "1" }); 
-      setError(null); 
-      setSuccess("Sale successfully recorded and stock deducted!"); 
+    onSuccess: async () => {
+      setAgentSaleForm({ agent_id: "", product_id: "", quantity: "1" });
+      setError(null);
+      setSuccess("Sale successfully recorded and stock deducted!");
       setTimeout(() => setSuccess(null), 4000);
     },
     onError: (err: any) => setError(err.response?.data?.detail || "Failed to record sale. Ensure the agent has accepted the stock handover.")
   });
 
-  // NEW: Delete Agent Mutation
+  // NEW: Reallocate Agent Stock Mutation
+  const reallocateAgentStock = useMutation({
+    mutationFn: async () => api.post("/distribution/agents/reallocate", {
+      source_agent_id: agentReallocationForm.source_agent_id,
+      destination_agent_id: agentReallocationForm.destination_agent_id,
+      product_id: agentReallocationForm.product_id,
+      quantity: Number(agentReallocationForm.quantity),
+      reason: agentReallocationForm.reason
+    }),
+    onSuccess: async () => {
+      setAgentReallocationForm({ source_agent_id: "", destination_agent_id: "", product_id: "", quantity: "1", reason: "" });
+      setError(null);
+      setSuccess("Agent stock instantly reallocated in the field!");
+      setTimeout(() => setSuccess(null), 4000);
+    },
+    onError: (err: any) => setError(err.response?.data?.detail || "Failed to reallocate stock.")
+  });
+
   const deleteAgent = useMutation({
     mutationFn: async (agentId: string) => api.delete(`/distribution/agents/${agentId}`),
     onSuccess: async () => {
@@ -83,7 +106,6 @@ export default function FieldAgentsPage() {
     onError: (err: any) => setError(err.response?.data?.detail || "Failed to delete agent.")
   });
 
-  // Add this right above the return statement
   const allAgents = agents.data ?? [];
   const totalPages = Math.ceil(allAgents.length / itemsPerPage);
   const paginatedAgents = allAgents.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
@@ -94,7 +116,7 @@ export default function FieldAgentsPage() {
       {success && <div className="mb-6 rounded-md bg-green-50 px-4 py-3 text-sm font-medium text-green-700">{success}</div>}
 
       <div className="grid gap-8 max-w-5xl">
-        
+
         {/* Tool 1: Create Agent */}
         <section className="rounded-md border border-line bg-white shadow-sm overflow-hidden">
           <div className="flex items-center gap-2 border-b border-line bg-slate-50 px-6 py-4">
@@ -105,12 +127,10 @@ export default function FieldAgentsPage() {
             <div className="grid gap-4 md:grid-cols-4 items-end">
               <TextField label="Agent Name" value={newAgentForm.name} onChange={(e) => setNewAgentForm({ ...newAgentForm, name: e.target.value })} required />
               <TextField label="Phone (Optional)" value={newAgentForm.phone} onChange={(e) => setNewAgentForm({ ...newAgentForm, phone: e.target.value })} />
-              
               <SelectField label="Operating Region" value={newAgentForm.region} onChange={(e) => setNewAgentForm({ ...newAgentForm, region: e.target.value })} required>
                 <option value="">Select region...</option>
                 {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
               </SelectField>
-
               <ActionButton disabled={createAgent.isPending} type="submit" className="w-full">Register Agent</ActionButton>
             </div>
           </form>
@@ -126,23 +146,17 @@ export default function FieldAgentsPage() {
             <div className="grid gap-4 md:grid-cols-5 items-end">
               <SelectField label="Select Agent" value={agentAllocationForm.agent_id} onChange={(e) => setAgentAllocationForm({ ...agentAllocationForm, agent_id: e.target.value })} required>
                 <option value="">Select agent...</option>
-                {/* THE FIX: Remove the hardcoded hub assignment from the label */}
                 {(agents.data ?? []).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               </SelectField>
-
-              {/* THE FIX: New Target Hub Dropdown */}
               <SelectField label="Pickup Hub" value={agentAllocationForm.hub_id} onChange={(e) => setAgentAllocationForm({ ...agentAllocationForm, hub_id: e.target.value })} required>
                 <option value="">Select pickup hub...</option>
                 {(hubs.data ?? []).map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
               </SelectField>
-
               <SelectField label="Product" value={agentAllocationForm.product_id} onChange={(e) => setAgentAllocationForm({ ...agentAllocationForm, product_id: e.target.value })} required>
                 <option value="">Select product...</option>
                 {(products.data?.items ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </SelectField>
-
               <TextField label="Quantity" min={1} type="number" value={agentAllocationForm.quantity} onChange={(e) => setAgentAllocationForm({ ...agentAllocationForm, quantity: e.target.value })} required />
-              
               <ActionButton disabled={allocateStockToAgent.isPending} type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700">Dispatch</ActionButton>
             </div>
           </form>
@@ -170,17 +184,48 @@ export default function FieldAgentsPage() {
           </form>
         </section>
 
-        {/* Tool 4: Manage Active Agents (Directory) */}
+        {/* NEW Tool 4: Agent-to-Agent Reallocation */}
+        {["SUPER_ADMIN", "MANAGER", "DISTRIBUTION_TEAM", "REGIONAL_MANAGER"].includes(userRole || "") && (
+          <section className="rounded-md border border-line bg-white shadow-sm overflow-hidden">
+            <div className="flex items-center gap-2 border-b border-line bg-amber-50/50 px-6 py-4">
+              <ArrowRightLeft className="h-5 w-5 text-amber-600" />
+              <h2 className="text-lg font-semibold text-ink">4. Field Reallocation (Agent-to-Agent)</h2>
+            </div>
+            <form onSubmit={(e) => { e.preventDefault(); reallocateAgentStock.mutate(); }} className="p-6">
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 items-end">
+                <SelectField label="Source Agent (Has Stock)" value={agentReallocationForm.source_agent_id} onChange={(e) => setAgentReallocationForm({ ...agentReallocationForm, source_agent_id: e.target.value })} required>
+                  <option value="">Select source agent</option>
+                  {(agents.data ?? []).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </SelectField>
+                <SelectField label="Destination Agent (Needs Stock)" value={agentReallocationForm.destination_agent_id} onChange={(e) => setAgentReallocationForm({ ...agentReallocationForm, destination_agent_id: e.target.value })} required>
+                  <option value="">Select destination agent</option>
+                  {(agents.data ?? []).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </SelectField>
+                <SelectField label="Product to Move" value={agentReallocationForm.product_id} onChange={(e) => setAgentReallocationForm({ ...agentReallocationForm, product_id: e.target.value })} required>
+                  <option value="">Select product...</option>
+                  {(products.data?.items ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </SelectField>
+                <TextField label="Quantity" min={1} type="number" value={agentReallocationForm.quantity} onChange={(e) => setAgentReallocationForm({ ...agentReallocationForm, quantity: e.target.value })} required />
+                <div className="lg:col-span-2">
+                  <TextField label="Justification / Reason" placeholder="Why is this stock being moved?" value={agentReallocationForm.reason} onChange={(e) => setAgentReallocationForm({ ...agentReallocationForm, reason: e.target.value })} required />
+                </div>
+                <div className="md:col-span-2 lg:col-span-3">
+                  <ActionButton disabled={reallocateAgentStock.isPending} type="submit" className="w-full bg-amber-600 hover:bg-amber-700">Instant Field Reallocation</ActionButton>
+                </div>
+              </div>
+            </form>
+          </section>
+        )}
+
+        {/* Tool 5: Manage Active Agents (Directory) */}
         <section className="rounded-md border border-line bg-white shadow-sm flex flex-col h-fit mb-12">
           <div className="flex items-center gap-2 border-b border-line bg-slate-50 px-6 py-4">
             <Contact className="h-5 w-5 text-slate-600" />
-            <h2 className="text-lg font-semibold text-ink">4. Active Agent Directory</h2>
+            <h2 className="text-lg font-semibold text-ink">5. Active Agent Directory</h2>
           </div>
-          
-          {/* SCROLLABLE CONTAINER WITH MAX HEIGHT */}
+
           <div className="overflow-x-auto overflow-y-auto max-h-[600px]">
             <table className="w-full text-left text-sm whitespace-nowrap">
-              {/* STICKY HEADER */}
               <thead className="bg-panel text-xs uppercase text-slate-500 sticky top-0 z-10 shadow-sm border-b border-line">
                 <tr>
                   <th className="px-4 py-3 bg-panel">Agent Name</th>
@@ -191,7 +236,6 @@ export default function FieldAgentsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {/* MAPPING OVER PAGINATED AGENTS */}
                 {paginatedAgents.map((agent) => (
                   <tr key={agent.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3 font-semibold text-ink">{agent.name}</td>
@@ -230,7 +274,6 @@ export default function FieldAgentsPage() {
             </table>
           </div>
 
-          {/* PAGINATION FOOTER */}
           {totalPages > 1 && (
             <div className="flex items-center justify-between border-t border-line px-6 py-3 bg-slate-50">
               <span className="text-xs text-slate-500">
@@ -255,8 +298,7 @@ export default function FieldAgentsPage() {
             </div>
           )}
         </section>
-
       </div>
     </AppShell>
   );
-}  //some commit issue
+}

@@ -11,7 +11,7 @@ import type { ProductPage, AgentRecord, InventoryBalance, InventoryTransaction }
 
 export default function AgentDashboardPage() {
   const queryClient = useQueryClient();
-  
+
   // Master Filter State
   const [activeAgentId, setActiveAgentId] = useState<string>("");
 
@@ -28,7 +28,7 @@ export default function AgentDashboardPage() {
 
   // Filtered Data based on selected Agent
   const activeAgent = useMemo(() => (agents.data ?? []).find(a => a.id === activeAgentId), [agents.data, activeAgentId]);
-  
+
   const agentBackpack = useMemo(() => {
     return (balances.data ?? []).filter(bal => bal.location_id === activeAgentId && bal.quantity > 0);
   }, [balances.data, activeAgentId]);
@@ -56,13 +56,13 @@ export default function AgentDashboardPage() {
 
   return (
     <AppShell title="Agent Monitoring Dashboard" description="Select an agent to view their current holding stock, process returns, and track sales history.">
-      
+
       {/* 1. MASTER AGENT FILTER */}
       <section className="mb-8 rounded-md border border-brand bg-teal-50/30 p-6 shadow-sm">
         <div className="max-w-md">
-          <SelectField 
-            label="Select Active Agent" 
-            value={activeAgentId} 
+          <SelectField
+            label="Select Active Agent"
+            value={activeAgentId}
             onChange={(e) => setActiveAgentId(e.target.value)}
           >
             <option value="">-- Choose an Agent --</option>
@@ -86,7 +86,7 @@ export default function AgentDashboardPage() {
         </div>
       ) : (
         <div className="grid gap-6 xl:grid-cols-[1fr_400px]">
-          
+
           {/* 2. CURRENT BACKPACK (HELD INVENTORY) */}
           <section className="rounded-md border border-line bg-white h-fit shadow-sm">
             <div className="flex items-center gap-2 border-b border-line bg-slate-50 px-4 py-3">
@@ -108,8 +108,8 @@ export default function AgentDashboardPage() {
                       <td className="px-4 py-3 font-medium text-ink">{productNameById.get(balance.product_id) ?? balance.product_id}</td>
                       <td className="px-4 py-3 font-bold text-slate-700">{balance.quantity} Units</td>
                       <td className="px-4 py-3 text-right">
-                        <ActionButton 
-                          variant="secondary" 
+                        <ActionButton
+                          variant="secondary"
                           onClick={() => {
                             const qtyStr = prompt(`How many units of ${productNameById.get(balance.product_id)} is ${activeAgent?.name} returning to the Hub?`, balance.quantity.toString());
                             const qty = parseInt(qtyStr || "0");
