@@ -50,6 +50,7 @@ export function ConfirmDialog({
               Type <strong className="select-all">{entityName}</strong> to confirm
             </label>
             <TextField
+              label="" 
               value={confirmText}
               onChange={(e) => setConfirmText(e.target.value)}
               placeholder={entityName}
